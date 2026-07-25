@@ -4,7 +4,7 @@ import { defineConfig } from "orval";
  * Codegen config — generates a typed client from FDR's ARPC DEX spec
  * (v2026.15.0). Output (`src/generated/`) is gitignored and regenerated on
  * build (`pnpm codegen` runs before `tsup`). To update, drop the new spec
- * JSON in the project root and bump the `input.target` below.
+ * JSON in `openapi/` and bump the `input.target` below.
  *
  * All calls route through the custom ky mutator in `src/http/client.ts`, which
  * sets the gateway base URL and injects the bearer token.
@@ -14,7 +14,7 @@ import { defineConfig } from "orval";
  */
 export default defineConfig({
 	arpc: {
-		input: { target: "./api-v2026.15.0.json" },
+		input: { target: "./openapi/api-v2026.15.0.json" },
 		output: {
 			mode: "single",
 			target: "./src/generated/arpc.ts",

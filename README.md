@@ -165,7 +165,7 @@ pnpm typecheck
 pnpm build             # codegen + tsup → dist/ (esm + cjs + d.ts)
 ```
 
-The typed client (`src/generated/`) is generated from the committed spec (`api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in the project root and update `input.target` in `codegen.ts`.
+The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
 
 ## Releasing
 
