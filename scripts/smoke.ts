@@ -21,7 +21,8 @@ import type {
 	PatchCondition,
 } from "../src/generated/model";
 
-const sdk = new ArpcSDK(configFromEnv());
+const config = configFromEnv();
+const sdk = new ArpcSDK(config);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => console.log(`\n\x1b[1m=== ${s} ===\x1b[0m`);
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
 	const ssn = randomTestSsn();
 	const nextPay = nextPayDate();
 	// The OAuth identity doubles as the lead's seller_agent_email (a registered DRA agent).
-	const sellerAgentEmail = configFromEnv().username;
+	const sellerAgentEmail = config.username;
 	console.log(`test ssn: ${ssn} (random first-5 + static 4123)`);
 
 	say("1. Token exchange");

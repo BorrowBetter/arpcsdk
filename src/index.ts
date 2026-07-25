@@ -22,6 +22,10 @@ export type { HttpResponse } from "./http/client";
  * so a business gate (e.g. a UW/DRA readiness failure) comes back as a normal
  * response you inspect via `status`/`data`. Only transport errors throw.
  *
+ * Note: config and the bearer token are process-global — construct one `ArpcSDK`
+ * per process. A second instance reconfigures the first; instances are not
+ * isolated (single-tenant by design).
+ *
  * @example
  * ```typescript
  * const sdk = new ArpcSDK({

@@ -1,8 +1,11 @@
 {
 	"name": "@borrowbetter/arpcsdk",
 	"version": "0.1.0",
-	"description": "FDR ARPC DEX SDK — typed client + enrollment orchestration for Achieve Resolution Partner Connect (Digital Enrollment Experience)",
+	"description": "Typed, agnostic client for FDR's ARPC DEX API — Achieve Resolution Partner Connect (Digital Enrollment Experience)",
 	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/BorrowBetter/arpcsdk.git"

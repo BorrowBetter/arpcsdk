@@ -37,10 +37,11 @@ export const customInstance = async <T>(
 	request: RequestConfig,
 	options?: Partial<RequestConfig>,
 ): Promise<HttpResponse<T>> => {
-	const { url, method, params, data, headers, signal } = {
-		...request,
-		...options,
-	};
+	const { url, method, params, data, signal } = { ...request, ...options };
+	// Merge headers from both sides — a per-call override (e.g. an
+	// x-correlation-id in `options.headers`) must not drop the operation's
+	// Content-Type. The bearer token is layered on last, below.
+	const headers = { ...request.headers, ...options?.headers };
 
 	const target = new URL(url, getConfig().gatewayUrl);
 	if (params) {
