@@ -17,9 +17,9 @@ export type { HttpResponse } from "./http/client";
  * poll loop).
  *
  * Auth is lazy: the first `api` call exchanges credentials for a bearer JWT and
- * caches it (~900s TTL, refreshed automatically once stale). There's no explicit
- * login step. Supply a `cache` in the config to persist the token across
- * restarts or share it across workers; otherwise it's held in-process.
+ * caches it (~900s TTL), then re-exchanges shortly before it expires. There's no
+ * explicit login step. Supply a `cache` in the config to persist the token
+ * across restarts or share it across workers; otherwise it's held in-process.
  *
  * Operations never throw on a non-2xx: each returns `{ status, data, headers }`,
  * so a business gate (e.g. a UW/DRA readiness failure) comes back as a normal
