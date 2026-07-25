@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     branches: [main]
-  # Manual trigger publishes the current package.json version (no versioning).
-  # Useful to (re)publish a version that was bumped but not yet on npm.
+  # Manual trigger publishes the current package.json version (no versioning) —
+  # e.g. to (re)publish a version that was bumped but isn't on npm yet.
   workflow_dispatch:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
@@ -76,21 +76,16 @@ jobs:
       # bundled npm predates it, so pull the latest first.
       - name: Update npm
         if: steps.plan.outputs.publish == 'true'
-        run: npm install -g npm@latest && npm -v
+        run: npm install -g npm@latest
 
       # setup-node's registry-url writes `_authToken=${NODE_AUTH_TOKEN}` into the
-      # .npmrc. With no token that line makes npm attempt empty-token auth instead
-      # of the OIDC exchange. Strip it (and always-auth) so npm falls through to
-      # OIDC — keeping registry-url so npm still targets npmjs.org.
+      # .npmrc; with no token that line makes npm attempt empty-token auth instead
+      # of the OIDC exchange. Strip it so npm falls through to OIDC (registry-url
+      # stays, so npm still targets npmjs.org).
       # https://github.com/actions/setup-node/issues/1551
-      - name: Enable OIDC (strip token lines from .npmrc)
+      - name: Enable OIDC (strip token line from .npmrc)
         if: steps.plan.outputs.publish == 'true'
-        run: |
-          if [ -n "$NPM_CONFIG_USERCONFIG" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
-            sed -i '/_authToken/d; /always-auth/d' "$NPM_CONFIG_USERCONFIG"
-            echo "--- .npmrc after strip ---"; cat "$NPM_CONFIG_USERCONFIG"
-          fi
-          echo "id-token URL present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+        run: sed -i '/_authToken/d; /always-auth/d' "$NPM_CONFIG_USERCONFIG"
 
       - name: Publish to npm
         if: steps.plan.outputs.publish == 'true'
