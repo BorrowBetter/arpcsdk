@@ -7,7 +7,7 @@
  * financial data live HERE, in the fixture below. Run: `pnpm smoke` (needs STG
  * creds in `.env`).
  *
- * Sequence: token → eligibility → registerV2 → program(poll) → lead → GET →
+ * Sequence: eligibility → registerV2 → program(poll) → lead → GET →
  *   PATCH conditions → uwV2 → send-email(if not auto-sent) → bank →
  *   program-summary(gates DRA) → readiness → DRA.
  */
@@ -80,11 +80,8 @@ async function main(): Promise<void> {
 	const sellerAgentEmail = config.username;
 	console.log(`test ssn: ${ssn} (random first-5 + static 4123)`);
 
-	say("1. Token exchange");
-	const token = await sdk.authenticate();
-	console.log(`token acquired (expires_in ${token.expires_in}s)`);
-
-	say("2. Eligibility (mint applicant id)");
+	// Auth is lazy — the first api call below exchanges credentials automatically.
+	say("1. Eligibility (mint applicant id)");
 	const elig = await sdk.api.checkEligibility({
 		pull_credit_report: false,
 		applicant: { current_address: { state: "AZ" } },
@@ -108,7 +105,7 @@ async function main(): Promise<void> {
 	const email = `smoke-${faid}@ljnoft7r.mailosaur.net`;
 	show(elig.status, { fdr_applicant_id: faid, email });
 
-	say("3. Register applicant (v2)");
+	say("2. Register applicant (v2)");
 	const reg = await sdk.api.registerApplicantV2({
 		seller_agent_email: sellerAgentEmail,
 		applicant: {
@@ -128,7 +125,7 @@ async function main(): Promise<void> {
 	});
 	show(reg.status, reg.data);
 
-	say("4. Program generation (poll until ready)");
+	say("3. Program generation (poll until ready)");
 	let prog = await sdk.api.generateProgramV1({
 		fdr_applicant_id: faid,
 		is_final_retry: false,
@@ -156,7 +153,7 @@ async function main(): Promise<void> {
 		payment_options: papp?.payment_options,
 	});
 
-	say("5. Create lead");
+	say("4. Create lead");
 	const lead = await sdk.api.createLeadSync({
 		other_debt_payments: 150,
 		utilities: 250,
@@ -228,7 +225,7 @@ async function main(): Promise<void> {
 		conditions: (lead.data.application?.conditions ?? []).map((c) => c?.name),
 	});
 
-	say("5b. GET lead → read hard-conditions");
+	say("4b. GET lead → read hard-conditions");
 	const got = await sdk.api.readLead(faid);
 	const gapp = got.data.application;
 	const hardAppConds = (gapp?.conditions ?? []).filter(isHard);
@@ -242,7 +239,7 @@ async function main(): Promise<void> {
 		),
 	});
 
-	say("5c. PATCH verify hard-conditions");
+	say("4c. PATCH verify hard-conditions");
 	const patchBody: LeadPatchRequest = {};
 	if (hardAppConds.length) patchBody.conditions = hardAppConds.map(verify);
 	if (hardDebtAccounts.length) {
@@ -256,14 +253,14 @@ async function main(): Promise<void> {
 		verified_app_conditions: patchBody.conditions?.length ?? 0,
 	});
 
-	say("6. UW submission (v2)");
+	say("5. UW submission (v2)");
 	const uw = await sdk.api.uwSubmissionV2(faid);
 	const disclosureAutoSent =
 		uw.status === 200 && uw.data.banking_disclosure_email_sent === true;
 	show(uw.status, uw.data);
 	if (uw.status !== 200) throw new Error("UW submission not accepted");
 
-	say("7. Banking disclosure email");
+	say("6. Banking disclosure email");
 	if (disclosureAutoSent) {
 		console.log(
 			"UW auto-sent the disclosure on full approval — skipping manual send-email",
@@ -273,7 +270,7 @@ async function main(): Promise<void> {
 		show(em.status, em.data);
 	}
 
-	say("8. Bank update");
+	say("7. Bank update");
 	const bank = await sdk.api.updateApplicationBankDetails(faid, {
 		banking_disclosure_validation: true,
 		verification_code: "1010",
@@ -284,7 +281,7 @@ async function main(): Promise<void> {
 	});
 	show(bank.status, { status: bank.status });
 
-	say("9. Program summary task (gates DRA)");
+	say("8. Program summary task (gates DRA)");
 	const end = new Date();
 	const start = new Date(end.getTime() - 15 * 60_000);
 	const psr = await sdk.api.createProgramSummaryTask(faid, {
@@ -295,14 +292,14 @@ async function main(): Promise<void> {
 	});
 	show(psr.status, psr.data); // 201 Created on success
 
-	say("10. DRA readiness");
+	say("9. DRA readiness");
 	const rd = await sdk.api.getApplicationReadiness(faid);
 	show(rd.status, {
 		is_uw_approved: rd.data.is_uw_approved,
 		checks: rd.data.checks,
 	});
 
-	say("11. Generate DRA (DocuSign URL signing)");
+	say("10. Generate DRA (DocuSign URL signing)");
 	const dra = await sdk.api.generateDra(faid, {
 		returning_url: "https://www.example.net/callback/docusign",
 		applicant: { signing_type: "url" },

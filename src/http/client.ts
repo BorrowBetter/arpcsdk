@@ -1,20 +1,17 @@
 import ky from "ky";
+import { resolveToken } from "../auth";
 import { getConfig } from "../config";
 
 // ---------------------------------------------------------------------------
 // Orval custom mutator (ky-backed).
 //
 // Every generated operation calls `customInstance<T>(config, options)`. We
-// route all calls to the API gateway, inject the bearer token, and return a
-// small { status, data, headers } wrapper WITHOUT throwing on non-2xx — the
-// caller inspects status codes itself (202 + Retry-After on program, 400 on a
-// UW/DRA gate, etc.).
+// route all calls to the API gateway, attach the bearer token via a
+// beforeRequest hook (lazy auth — `resolveToken()` exchanges/refreshes as
+// needed), and return a small { status, data, headers } wrapper WITHOUT
+// throwing on non-2xx — the caller inspects status codes itself (202 +
+// Retry-After on program, 400 on a UW/DRA gate, etc.).
 // ---------------------------------------------------------------------------
-
-let bearerToken: string | null = null;
-export function setBearerToken(token: string | null): void {
-	bearerToken = token;
-}
 
 // Shape Orval passes as the first arg (axios-style request config).
 export interface RequestConfig {
@@ -53,9 +50,16 @@ export const customInstance = async <T>(
 
 	const response = await ky(target, {
 		method,
-		headers: {
-			...headers,
-			...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+		headers,
+		hooks: {
+			// Lazy bearer injection: resolveToken() exchanges on the first call
+			// and refreshes once the cached token goes stale. The OAuth exchange
+			// itself runs on a bare ky.post (no hook), so there's no recursion.
+			beforeRequest: [
+				async (req) => {
+					req.headers.set("Authorization", `Bearer ${await resolveToken()}`);
+				},
+			],
 		},
 		...(data !== undefined ? { json: data } : {}),
 		signal,
