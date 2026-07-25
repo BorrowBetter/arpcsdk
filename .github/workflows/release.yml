@@ -62,11 +62,24 @@ jobs:
         if: steps.check.outputs.has_changesets == 'true'
         run: pnpm build
 
-      # Trusted publishing (OIDC) — no NPM_TOKEN. Needs a recent npm; node 24's
-      # bundled version can predate OIDC support, so pull the latest first.
+      # Trusted publishing (OIDC) — no NPM_TOKEN. Needs npm >= 11.5.1; node 24's
+      # bundled npm predates it, so pull the latest first.
       - name: Update npm
         if: steps.check.outputs.has_changesets == 'true'
-        run: npm install -g npm@latest
+        run: npm install -g npm@latest && npm -v
+
+      # setup-node's registry-url writes `_authToken=${NODE_AUTH_TOKEN}` into the
+      # .npmrc. With no token that line makes npm attempt empty-token auth instead
+      # of the OIDC exchange (ENEEDAUTH / E404). Strip it (and always-auth) so npm
+      # falls through to OIDC trusted publishing — keeping registry-url so npm still
+      # targets npmjs.org. https://github.com/actions/setup-node/issues/1551
+      - name: Enable OIDC (strip token lines from .npmrc)
+        if: steps.check.outputs.has_changesets == 'true'
+        run: |
+          if [ -n "$NPM_CONFIG_USERCONFIG" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
+            sed -i '/_authToken/d; /always-auth/d' "$NPM_CONFIG_USERCONFIG"
+            echo "--- .npmrc after strip ---"; cat "$NPM_CONFIG_USERCONFIG"
+          fi
 
       - name: Publish to npm
         if: steps.check.outputs.has_changesets == 'true'
