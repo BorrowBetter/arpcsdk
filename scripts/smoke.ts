@@ -1,7 +1,8 @@
 /**
  * CLI smoke — drives the shared flow engine (src/flow.ts) through the full FDR
- * DEX v2 sequence against live STG and prints each step's result. The web smoke
- * UI (scripts/server.ts) drives the exact same engine, so CLI and UI stay in lockstep.
+ * ARPC DEX enrollment sequence against live STG and prints each step's result.
+ * The web smoke UI (scripts/server.ts) drives the exact same engine, so CLI and
+ * UI stay in lockstep.
  *
  * Flow: token → eligibility → registerV2 → program(poll) → lead → GET → PATCH →
  *       uwSubmissionV2 → send-email(only if not auto-sent) → bank → program-summary →

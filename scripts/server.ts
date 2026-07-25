@@ -156,6 +156,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
 	console.log(
-		`\n  FDR v2 smoke UI  →  http://localhost:${PORT}\n  (drives live STG; each step is a real gateway call)\n`,
+		`\n  arpcsdk smoke UI  →  http://localhost:${PORT}\n  (drives live STG; each step is a real gateway call)\n`,
 	);
 });

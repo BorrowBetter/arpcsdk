@@ -1,13 +1,18 @@
 /**
- * Flow engine — the FDR DEX v2 enrollment sequence as discrete, replayable
- * steps over the Orval-generated client. One source of truth shared by the CLI
- * smoke (`smoke.ts`) and the web smoke UI (`server.ts`).
+ * Flow engine — the FDR ARPC DEX enrollment sequence as discrete, replayable
+ * steps over the generated client. `ArpcSDK` (src/index.ts) exposes these as
+ * methods; the dev scripts (scripts/smoke.ts, scripts/server.ts) drive the same
+ * steps.
  *
- * Each step takes a mutable `Run` (holds the through-line state — faid, program,
- * conditions, …) and returns a `StepResult` with a UI-ready `display` map plus
- * the `raw` gateway response. The mutator never throws on non-2xx, so a gated
- * step (e.g. UW ER40301, DRA ER40501) returns `ok:false` with the real error
- * body rather than blowing up.
+ * Each step takes a mutable `Run` (the through-line state — faid, program,
+ * conditions, …) and returns a `StepResult`: a `display` summary plus the `raw`
+ * gateway response. The mutator never throws on non-2xx, so a gated step (a UW
+ * or DRA readiness gate) returns `ok:false` with the real error body instead of
+ * throwing.
+ *
+ * NOTE: these steps currently drive FDR's canned STG test identity (CORE
+ * SPINWHEEL) with fixed applicant + financial data — a reference/smoke flow, not
+ * yet parameterized for real applicants.
  */
 
 import { exchangeToken } from "./auth";
@@ -23,7 +28,7 @@ import type {
 const api = getARPCAchieveResolutionPartnerConnectAPI();
 
 // ---------------------------------------------------------------------------
-// Shared identity + helpers (ported from the CLI smoke)
+// STG test identity + helpers
 // ---------------------------------------------------------------------------
 
 export function nextPayDate(daysOut = 14): string {
@@ -91,7 +96,7 @@ export interface Run {
 	// condition ids read at GET, cleared at PATCH
 	hardAppConds?: LeadCondition[];
 	hardDebtAccounts?: { id?: string; conditions: LeadCondition[] }[];
-	// outcomes the UI branches on
+	// outcomes callers branch on
 	disclosureAutoSent?: boolean;
 	dra?: { envelopeId?: string; signingUrl?: string };
 	log: string[];
@@ -120,7 +125,7 @@ const need = <T>(v: T | undefined | null, msg: string): T => {
 export async function stepToken(run: Run): Promise<StepResult> {
 	const token = await exchangeToken();
 	run.log.push(`token acquired (len ${token.access_token.length})`);
-	// Never hand the raw JWT to the browser — return meta only.
+	// Never surface the raw JWT — metadata only.
 	return {
 		status: 200,
 		ok: true,
@@ -574,9 +579,9 @@ export async function stepLeadTransfer(run: Run): Promise<StepResult> {
 	};
 }
 
-// Ordered registry the UI + CLI drive. `auto` steps that FDR auto-handles
-// (send-email only when the disclosure wasn't auto-sent) are flagged so callers
-// can branch.
+// Ordered registry the SDK, dev UI, and CLI drive. It's a flat step list;
+// callers handle conditional steps off the run (e.g. skip `email` when
+// `run.disclosureAutoSent` is true).
 export const STEPS = [
 	{ key: "token", label: "Token exchange", run: stepToken },
 	{
