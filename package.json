@@ -21,8 +21,9 @@
 	"files": [
 		"dist"
 	],
+	"packageManager": "pnpm@10.24.0",
 	"scripts": {
-		"build": "npm run codegen && tsup",
+		"build": "pnpm codegen && tsup",
 		"build:dist": "tsup",
 		"codegen": "orval --config codegen.ts",
 		"dev": "tsup --watch",
@@ -30,7 +31,7 @@
 		"typecheck:scripts": "tsc --noEmit --project scripts/tsconfig.json",
 		"smoke": "tsx scripts/smoke.ts",
 		"ui": "tsx scripts/server.ts",
-		"prepublishOnly": "npm run build",
+		"prepublishOnly": "pnpm build",
 		"lint": "biome check",
 		"format": "biome check --write --unsafe",
 		"format:check": "biome ci"

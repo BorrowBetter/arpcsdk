@@ -3,19 +3,19 @@
     "setup": [
       "git fetch origin main && git merge --ff-only origin/main || true",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env",
-      "npm install",
-      "npm run codegen"
+      "pnpm install",
+      "pnpm codegen"
     ]
   },
   "scripts": {
     "smoke": {
-      "command": "npm run smoke"
+      "command": "pnpm smoke"
     },
     "ui": {
-      "command": "npm run ui"
+      "command": "pnpm ui"
     },
     "dev": {
-      "command": "npm run dev"
+      "command": "pnpm dev"
     }
   }
 }

@@ -28,9 +28,9 @@ if [[ "$BRANCH" != "main" ]]; then
   exit 1
 fi
 
-# Ensure logged into npm
-if ! npm whoami &>/dev/null; then
-  echo "Error: not logged into npm — run 'npm login' first"
+# Ensure logged into npm (pnpm publishes to the npm registry)
+if ! pnpm whoami &>/dev/null; then
+  echo "Error: not logged into npm — run 'pnpm login' first"
   exit 1
 fi
 
@@ -39,19 +39,19 @@ git pull --ff-only
 
 # Typecheck
 echo "→ Typechecking..."
-npm run typecheck
+pnpm typecheck
 
 # Build
 echo "→ Building..."
-npm run build
+pnpm build
 
 # Bump version in package.json (no git tag yet)
 echo "→ Bumping $BUMP version..."
-npm version "$BUMP" --no-git-tag-version
+pnpm version "$BUMP" --no-git-tag-version
 VERSION=$(node -p "require('./package.json').version")
 
 # Commit version bump
-git add package.json package-lock.json
+git add package.json pnpm-lock.yaml
 git commit -m "v$VERSION"
 
 # Tag
@@ -61,8 +61,8 @@ git tag "v$VERSION"
 git push origin main
 git push origin "v$VERSION"
 
-# Publish to npm
-npm publish --access public --otp="$OTP"
+# Publish to npm (own git checks already done above)
+pnpm publish --access public --otp="$OTP" --no-git-checks
 
 echo ""
 echo "✓ Published @borrowbetter/arpcsdk@$VERSION"

@@ -5,7 +5,7 @@ TypeScript SDK for FDR's **ARPC DEX** API — Achieve Resolution Partner Connect
 ## Installation
 
 ```bash
-npm install @borrowbetter/arpcsdk
+pnpm add @borrowbetter/arpcsdk
 ```
 
 ## Requirements
@@ -70,15 +70,15 @@ Every step returns a `StepResult` — `{ ok, status, display, raw }`. Steps neve
 
 ```bash
 cp .env.example .env   # fill in STG credentials
-npm install
-npm run codegen        # regenerate the typed client from the OpenAPI spec
-npm run smoke          # drive the full flow against live STG (prints each step)
-npm run ui             # web smoke UI — dev endpoint view + a consumer checkout mock
-npm run typecheck
-npm run build          # codegen + tsup → dist/ (esm + cjs + d.ts)
+pnpm install
+pnpm codegen           # regenerate the typed client from the OpenAPI spec
+pnpm smoke             # drive the full flow against live STG (prints each step)
+pnpm ui                # web smoke UI — dev endpoint view + a consumer checkout mock
+pnpm typecheck
+pnpm build             # codegen + tsup → dist/ (esm + cjs + d.ts)
 ```
 
-The typed client (`src/generated/`) is generated from the committed spec (`api-v2026.15.0.json`) and is not checked in — `npm run codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in the project root and update `input.target` in `codegen.ts`.
+The typed client (`src/generated/`) is generated from the committed spec (`api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in the project root and update `input.target` in `codegen.ts`.
 
 ## Releasing
 

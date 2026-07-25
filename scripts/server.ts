@@ -4,7 +4,7 @@
  *
  * State lives server-side in an in-memory run store keyed by runId; the browser
  * only ever sees display summaries + raw gateway responses (never the JWT or
- * .env creds). This is a local dev tool — `npm run ui`, open the printed URL.
+ * .env creds). This is a local dev tool — `pnpm ui`, open the printed URL.
  */
 import "dotenv-flow/config";
 import { configFromEnv, configure } from "../src/config";
