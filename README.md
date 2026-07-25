@@ -156,8 +156,13 @@ The typed client (`src/generated/`) is generated from the committed spec (`opena
 
 ## Releasing
 
-```bash
-./publish.sh <npm-otp> [patch|minor|major]
-```
+Releases are automated via [Changesets](https://github.com/changesets/changesets) + GitHub Actions — no manual publish.
 
-Requires a clean tree on `main` and an npm login. Typechecks, builds, bumps the version, tags, pushes, and publishes `@borrowbetter/arpcsdk`.
+1. With your change, add a changeset describing it:
+   ```bash
+   pnpm changeset
+   ```
+   Pick the bump (patch/minor/major) and write a summary. Commit the generated `.changeset/*.md` alongside your code.
+2. Merge to `main`. The **Release** workflow (`.github/workflows/release.yml`) then runs `changeset version` (bumps `package.json` + updates `CHANGELOG.md`, consuming the changeset), commits `chore: version packages`, and publishes to npm.
+
+Publishing uses **npm OIDC trusted publishing** — no `NPM_TOKEN` secret. The trusted-publisher policy on npm is scoped to this repo + the `release.yml` workflow.

@@ -2,6 +2,7 @@
 	"name": "@borrowbetter/arpcsdk",
 	"version": "0.1.0",
 	"description": "Typed, agnostic client for FDR's ARPC DEX API — Achieve Resolution Partner Connect (Digital Enrollment Experience)",
+	"author": "BorrowBetter",
 	"license": "MIT",
 	"publishConfig": {
 		"access": "public"
@@ -11,6 +12,9 @@
 		"url": "git+https://github.com/BorrowBetter/arpcsdk.git"
 	},
 	"homepage": "https://github.com/BorrowBetter/arpcsdk#readme",
+	"bugs": {
+		"url": "https://github.com/BorrowBetter/arpcsdk/issues"
+	},
 	"main": "./dist/index.js",
 	"module": "./dist/index.mjs",
 	"types": "./dist/index.d.ts",
@@ -36,13 +40,18 @@
 		"prepublishOnly": "pnpm build",
 		"lint": "biome check",
 		"format": "biome check --write --unsafe",
-		"format:check": "biome ci"
+		"format:check": "biome ci",
+		"changeset": "changeset",
+		"version": "changeset version",
+		"release": "pnpm build && changeset publish"
 	},
 	"dependencies": {
 		"ky": "^1.7.4"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.4",
+		"@changesets/changelog-github": "^0.5.0",
+		"@changesets/cli": "^2.27.0",
 		"@types/node": "^22.10.5",
 		"dotenv-flow": "^4.1.0",
 		"orval": "^7.13.0",
