@@ -1,5 +1,15 @@
 # @borrowbetter/arpcsdk
 
+## 0.2.0
+
+### Minor Changes
+
+- [#1](https://github.com/BorrowBetter/arpcsdk/pull/1) [`190203e`](https://github.com/BorrowBetter/arpcsdk/commit/190203e5a69b463e6a2cf904f176065a42b56fb5) Thanks [@rkingon](https://github.com/rkingon)! - Lazy, cacheable OAuth token lifecycle.
+
+  **BREAKING:** `sdk.authenticate()` is removed. Authentication now happens lazily on the first `api` call via a ky `beforeRequest` hook — the SDK exchanges credentials, caches the bearer JWT, and refreshes it automatically ~30s before expiry. Delete any `await sdk.authenticate()` calls; the first operation handles it.
+
+  **New:** an optional `cache?: TokenCache` on `ArpcConfig` to control where the token lives — persist it across restarts or share one token across workers instead of the default in-memory, per-process store. The cache owns expiry (`get()` returns `null` when stale); the SDK single-flights the exchange so a cold burst does one `/v1/token` call.
+
 ## 0.1.1
 
 ### Patch Changes
