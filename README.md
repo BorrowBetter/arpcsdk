@@ -25,8 +25,8 @@ const sdk = new ArpcSDK({
   password: process.env.FDR_OAUTH_PASSWORD!,
 });
 
-await sdk.authenticate();                 // exchange credentials → bearer JWT (~900s TTL)
-
+// The first api call authenticates automatically — it exchanges your
+// credentials for a bearer JWT (~900s TTL), caches it, and reuses it.
 const elig = await sdk.api.checkEligibility({ /* … */ });
 const faid = elig.data.application?.applicant?.fdr_applicant_id;
 
@@ -42,7 +42,7 @@ Four things to hold in your head:
 
 - **Two hosts.** Auth happens on the **OAuth host** (`POST /v1/token`, HTTP Basic). Everything else goes to the **API gateway**. The SDK routes each call to the right one.
 - **The passport.** `fdr_applicant_id` is minted once at eligibility and threads through *every* subsequent call. You carry it between operations.
-- **Token lifecycle.** `authenticate()` exchanges credentials for a bearer JWT with a **~900s (15 min) TTL**, stored and attached to every `api` call. Re-call to refresh on a long run.
+- **Automatic token lifecycle.** Every `api` call carries a bearer JWT (**~900s / 15 min TTL**) that the SDK manages for you: it exchanges your credentials on the first call, caches the token, attaches it to every request, and re-exchanges ~30s before expiry. Concurrent calls share a single exchange. See [Token caching](#token-caching) to persist or share the token.
 - **No-throw responses.** Operations return `{ status, data, headers }`. Branch on `status` — don't wrap every call in try/catch.
 
 ## The enrollment workflow
@@ -56,7 +56,7 @@ sequenceDiagram
     participant GW as FDR API gateway
     participant DS as DocuSign
 
-    App->>OAuth: authenticate() — client_credentials
+    App->>OAuth: (lazy, on first api call) client_credentials
     OAuth-->>App: bearer JWT (~900s)
 
     Note over App,GW: Phase 1 — identity
@@ -89,7 +89,7 @@ sequenceDiagram
 
 ### Step by step
 
-**Auth** — `sdk.authenticate()`. One call up front; refresh if the run runs long.
+**Auth** — handled for you. The SDK authenticates on the first `api` call, caches the token, and refreshes it automatically. See [Token caching](#token-caching) to control where the token lives.
 
 **Phase 1 — identity**
 - `checkEligibility()` — stateless quote (no PII). Its critical job: it **mints `fdr_applicant_id`**. Registration doesn't return the id yet, so call eligibility first. *(FDR is working on making registerV2 return the id — not shipped yet.)*
@@ -140,6 +140,41 @@ sequenceDiagram
 `sdk.api.leadTransfer()` hands a lead to FDR's **retail sales floor** — a human calls the applicant to help them enroll by phone. Two uses: **reactive** (the digital flow stalls or the applicant abandons → hand off to recover) or **proactive** (offer phone vs. online checkout up front).
 
 Key property: **no inactivation.** Transferring does *not* close the digital lead — both stay active, and whichever path enrolls first wins. If retail enrolls first, a later digital enroll returns a duplicate / "already enrolled" error (expected). So calling it early is safe.
+
+## Token caching
+
+By default the bearer token lives in-memory, per-process — good enough for a single long-running service. Pass a `cache` in the config to change where it lives: persist it across restarts, or share one token across workers/instances instead of each exchanging its own.
+
+```typescript
+interface TokenCache {
+  get(): Promise<string | null>;              // valid token, or null if absent/expired
+  set(token: string, expiresAt: Date): Promise<void>;
+}
+```
+
+The contract:
+
+- **The cache owns expiry.** `get()` returns `null` once the token is stale; that `null` is what triggers a re-exchange. `expiresAt` is passed to `set()` already carrying the SDK's ~30s refresh skew, so honor it as-is.
+- **The SDK single-flights the exchange** within a process, so a cold burst does one `/v1/token` call. Across processes, a brief overlap where two workers each exchange is possible and harmless — FDR issues independent tokens.
+
+```typescript
+// Example: share the token across a fleet via Redis.
+const cache: TokenCache = {
+  async get() {
+    const [token, exp] = await redis.mget("arpc:token", "arpc:exp");
+    return token && exp && Date.now() < Number(exp) ? token : null;
+  },
+  async set(token, expiresAt) {
+    await redis
+      .multi()
+      .set("arpc:token", token)
+      .set("arpc:exp", String(expiresAt.getTime()))
+      .exec();
+  },
+};
+
+const sdk = new ArpcSDK({ /* …hosts + creds… */, cache });
+```
 
 ## Development
 

@@ -6,6 +6,21 @@
  * is a convenience for the dev scripts (smoke / server), which load `.env` via
  * dotenv-flow and pass the result in.
  */
+/**
+ * Bearer-token store. The SDK authenticates lazily on the first gateway call:
+ * it asks `get()` for a still-valid token and, on `null`, exchanges credentials
+ * and hands the fresh token to `set()`. Owning expiry is the cache's job —
+ * `get()` returns `null` once the token is stale (or near-stale). The default
+ * store is in-memory and per-process; supply one to persist across restarts or
+ * share across workers.
+ */
+export interface TokenCache {
+	/** Return a valid bearer token, or `null` if absent/expired. */
+	get(): Promise<string | null>;
+	/** Persist a freshly exchanged token. `expiresAt` already includes the SDK's refresh skew. */
+	set(token: string, expiresAt: Date): Promise<void>;
+}
+
 export interface ArpcConfig {
 	/** OAuth host — token exchange only (`POST /v1/token`). */
 	oauthUrl: string;
@@ -18,6 +33,8 @@ export interface ArpcConfig {
 	username: string;
 	/** OAuth client_secret (HTTP Basic password). */
 	password: string;
+	/** Bearer-token store. Defaults to an in-memory, per-process cache. */
+	cache?: TokenCache;
 }
 
 let current: ArpcConfig | null = null;
