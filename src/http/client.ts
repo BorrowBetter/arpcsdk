@@ -7,8 +7,8 @@ import { getConfig } from "../config";
 // Every generated operation calls `customInstance<T>(config, options)`. We
 // route all calls to the API gateway, inject the bearer token, and return a
 // small { status, data, headers } wrapper WITHOUT throwing on non-2xx — the
-// flow steps inspect status codes themselves (202 + Retry-After on program,
-// 400 on a UW/DRA gate, etc.) and surface them as `ok:false`.
+// caller inspects status codes itself (202 + Retry-After on program, 400 on a
+// UW/DRA gate, etc.).
 // ---------------------------------------------------------------------------
 
 let bearerToken: string | null = null;

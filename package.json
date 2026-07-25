@@ -30,7 +30,6 @@
 		"typecheck": "tsc --noEmit",
 		"typecheck:scripts": "tsc --noEmit --project scripts/tsconfig.json",
 		"smoke": "tsx scripts/smoke.ts",
-		"ui": "tsx scripts/server.ts",
 		"prepublishOnly": "pnpm build",
 		"lint": "biome check",
 		"format": "biome check --write --unsafe",
