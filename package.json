@@ -1,6 +1,6 @@
 {
 	"name": "@borrowbetter/arpcsdk",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Typed, agnostic client for FDR's ARPC DEX API — Achieve Resolution Partner Connect (Digital Enrollment Experience)",
 	"author": "BorrowBetter",
 	"license": "MIT",

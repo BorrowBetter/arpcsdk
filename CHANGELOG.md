@@ -1,5 +1,35 @@
 # @borrowbetter/arpcsdk
 
+## 0.3.0
+
+### Minor Changes
+
+- [#3](https://github.com/BorrowBetter/arpcsdk/pull/3) [`5d36997`](https://github.com/BorrowBetter/arpcsdk/commit/5d3699745e9a8b32354d9bbdb002247c9468349d) Thanks [@rkingon](https://github.com/rkingon)! - **Breaking:** restructure `ArpcConfig` around a required `environment`.
+
+  Hosts are now derived rather than passed. `new ArpcSDK()` takes `environment: "dev" | "stg" | "prd"`, and credentials move under a nested `auth` object:
+
+  ```typescript
+  // before
+  new ArpcSDK({
+    oauthUrl: "https://oauth.stg.ffngcp.com",
+    gatewayUrl: "https://apis-gateway-v2.stg.fdrgcp.com",
+    username,
+    password,
+    cache,
+  });
+
+  // after
+  new ArpcSDK({
+    environment: "stg",
+    auth: { username, password, cache },
+  });
+  ```
+
+  - `oauthUrl` / `gatewayUrl` are replaced by optional per-host overrides under `urls: { oauth?, gateway? }`. Omitted keys fall back to the environment's host.
+  - `cache` moves from the top level to `auth.cache`.
+  - **Removed `configFromEnv()`.** The SDK no longer reads environment variables at all — build the config object however you like and pass it in. If you relied on this helper, read the vars yourself at your composition root.
+  - New exports: the frozen `ARPC_ENDPOINTS` table, the `isArpcEnvironment()` type guard, and the `ArpcEnvironment` / `ArpcAuth` / `ArpcUrls` / `ArpcEndpoint` types.
+
 ## 0.2.0
 
 ### Minor Changes
