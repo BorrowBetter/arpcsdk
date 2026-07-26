@@ -40,7 +40,7 @@ export const customInstance = async <T>(
 	// Content-Type. The bearer token is layered on last, below.
 	const headers = { ...request.headers, ...options?.headers };
 
-	const target = new URL(url, getConfig().gatewayUrl);
+	const target = new URL(url, getConfig().urls.gateway);
 	if (params) {
 		for (const [key, value] of Object.entries(params)) {
 			if (value !== undefined && value !== null)

@@ -20,11 +20,13 @@ const DEFAULT_TTL_S = 900;
 
 /** Raw credentials → bearer JWT. No storage; `resolveToken()` owns that. */
 export async function exchangeToken(): Promise<TokenResponse> {
-	const { oauthUrl, username, password } = getConfig();
-	const basic = Buffer.from(`${username}:${password}`).toString("base64");
+	const { urls, auth } = getConfig();
+	const basic = Buffer.from(`${auth.username}:${auth.password}`).toString(
+		"base64",
+	);
 
 	return ky
-		.post(`${oauthUrl}/v1/token`, {
+		.post(`${urls.oauth}/v1/token`, {
 			headers: { Authorization: `Basic ${basic}` },
 			body: new URLSearchParams({ grant_type: "client_credentials" }),
 		})
@@ -53,7 +55,7 @@ let inflight: Promise<string> | null = null;
  * gateway beforeRequest hook; not part of the public surface.
  */
 export function resolveToken(): Promise<string> {
-	const store = getConfig().cache ?? defaultCache;
+	const store = getConfig().auth.cache ?? defaultCache;
 	if (inflight) return inflight;
 
 	inflight = (async () => {
