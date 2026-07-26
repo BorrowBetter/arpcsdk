@@ -13,7 +13,6 @@
  */
 import "dotenv-flow/config";
 import { ArpcSDK } from "../src";
-import { configFromEnv } from "../src/config";
 import type {
 	DebtAccount,
 	LeadCondition,
@@ -21,8 +20,25 @@ import type {
 	PatchCondition,
 } from "../src/generated/model";
 
-const config = configFromEnv();
-const sdk = new ArpcSDK(config);
+// Env plumbing is this script's business, not the SDK's — the library takes a
+// config object and never reads process.env.
+const need = (key: string): string => {
+	const value = process.env[key];
+	if (!value)
+		throw new Error(`Missing required env var: ${key} (set it in .env)`);
+	return value;
+};
+
+// Also the lead's seller_agent_email — see the fixture below.
+const username = need("ARPC_OAUTH_USERNAME");
+
+// Pinned to STG deliberately, NOT read from the environment. This script drives
+// a real enrollment end-to-end against the canned Spinwheel test identity, which
+// only exists in STG — pointing it at PRD would create live applicant records.
+const sdk = new ArpcSDK({
+	environment: "stg",
+	auth: { username, password: need("ARPC_OAUTH_PASSWORD") },
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => console.log(`\n\x1b[1m=== ${s} ===\x1b[0m`);
@@ -77,7 +93,7 @@ async function main(): Promise<void> {
 	const ssn = randomTestSsn();
 	const nextPay = nextPayDate();
 	// The OAuth identity doubles as the lead's seller_agent_email (a registered DRA agent).
-	const sellerAgentEmail = config.username;
+	const sellerAgentEmail = username;
 	console.log(`test ssn: ${ssn} (random first-5 + static 4123)`);
 
 	// Auth is lazy — the first api call below exchanges credentials automatically.

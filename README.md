@@ -19,10 +19,11 @@ pnpm add @borrowbetter/arpcsdk
 import { ArpcSDK } from "@borrowbetter/arpcsdk";
 
 const sdk = new ArpcSDK({
-  oauthUrl: "https://oauth.stg.ffngcp.com",
-  gatewayUrl: "https://apis-gateway-v2.stg.fdrgcp.com",
-  username: "borrowbetter@seller.com",   // OAuth client_id (also the seller_agent_email)
-  password: process.env.FDR_OAUTH_PASSWORD!,
+  environment: "stg",                      // "dev" | "stg" | "prd" — drives both hosts
+  auth: {
+    username: "borrowbetter@seller.com",   // OAuth client_id (also the seller_agent_email)
+    password: process.env.ARPC_OAUTH_PASSWORD!,
+  },
 });
 
 // The first api call authenticates automatically — it exchanges your
@@ -40,7 +41,7 @@ Every operation returns `{ status, data, headers }` and **never throws on a non-
 
 Four things to hold in your head:
 
-- **Two hosts.** Auth happens on the **OAuth host** (`POST /v1/token`, HTTP Basic). Everything else goes to the **API gateway**. The SDK routes each call to the right one.
+- **Two hosts, one switch.** Auth happens on the **OAuth host** (`POST /v1/token`, HTTP Basic). Everything else goes to the **API gateway**. You pick an `environment` and the SDK derives both — see [Environments](#environments).
 - **The passport.** `fdr_applicant_id` is minted once at eligibility and threads through *every* subsequent call. You carry it between operations.
 - **Automatic token lifecycle.** Every `api` call carries a bearer JWT (**~900s / 15 min TTL**) that the SDK manages for you: it exchanges your credentials on the first call, caches the token, attaches it to every request, and re-exchanges ~30s before expiry. Concurrent calls share a single exchange. See [Token caching](#token-caching) to persist or share the token.
 - **No-throw responses.** Operations return `{ status, data, headers }`. Branch on `status` — don't wrap every call in try/catch.
@@ -141,9 +142,33 @@ sequenceDiagram
 
 Key property: **no inactivation.** Transferring does *not* close the digital lead — both stay active, and whichever path enrolls first wins. If retail enrolls first, a later digital enroll returns a duplicate / "already enrolled" error (expected). So calling it early is safe.
 
+## Environments
+
+`environment` is required and selects both hosts. Note they sit on different domains — the OAuth host is `ffngcp.com`, the gateway is `fdrgcp.com`.
+
+| `environment` | OAuth host | API gateway |
+| --- | --- | --- |
+| `"dev"` | `https://oauth.dev.ffngcp.com` | `https://apis-gateway-v2.dev.fdrgcp.com` |
+| `"stg"` | `https://oauth.stg.ffngcp.com` | `https://apis-gateway-v2.stg.fdrgcp.com` |
+| `"prd"` | `https://oauth.prd.ffngcp.com` | `https://apis-gateway-v2.prd.fdrgcp.com` |
+
+Credentials are issued per environment — a STG client_id will not authenticate against PRD.
+
+Point at a host the table doesn't cover — a local mock, say — by overriding either one via `urls`. Anything you omit still comes from `environment`.
+
+```typescript
+const sdk = new ArpcSDK({
+  environment: "prd",
+  auth: { username, password },
+  urls: { gateway: "http://localhost:8080" },  // oauth still from "prd"
+});
+```
+
+The table is exported as `ARPC_ENDPOINTS` if you need to read a host without constructing an SDK. It's frozen — it backs both host resolution and environment validation, so mutating it isn't a supported way to redirect the SDK. Use `urls` for that.
+
 ## Token caching
 
-By default the bearer token lives in-memory, per-process — good enough for a single long-running service. Pass a `cache` in the config to change where it lives: persist it across restarts, or share one token across workers/instances instead of each exchanging its own.
+By default the bearer token lives in-memory, per-process — good enough for a single long-running service. Pass `auth.cache` to change where it lives: persist it across restarts, or share one token across workers/instances instead of each exchanging its own.
 
 ```typescript
 interface TokenCache {
@@ -173,19 +198,30 @@ const cache: TokenCache = {
   },
 };
 
-const sdk = new ArpcSDK({ /* …hosts + creds… */, cache });
+const sdk = new ArpcSDK({
+  environment: "stg",
+  auth: { username, password, cache },
+});
 ```
 
 ## Development
 
 ```bash
-cp .env.example .env   # fill in STG credentials
 pnpm install
 pnpm codegen           # regenerate the typed client from the OpenAPI spec
 pnpm smoke             # drive the full flow end-to-end against live STG
 pnpm typecheck
 pnpm build             # codegen + tsup → dist/ (esm + cjs + d.ts)
 ```
+
+`pnpm smoke` reads its credentials from `.env` (via dotenv-flow):
+
+```bash
+ARPC_OAUTH_USERNAME=...
+ARPC_OAUTH_PASSWORD=...
+```
+
+These are the smoke script's, not the SDK's — the library never reads `process.env`. The script pins `environment: "stg"` in code rather than taking it from `.env`: it drives a real enrollment against the canned STG test identity, so it must not be pointable at PRD.
 
 The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
 

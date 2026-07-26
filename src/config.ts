@@ -2,9 +2,8 @@
  * SDK configuration.
  *
  * The library never reads the environment itself — a consumer constructs
- * `new ArpcSDK(config)`, which calls `configure()`. The `configFromEnv()` helper
- * is a convenience for the dev scripts (smoke / server), which load `.env` via
- * dotenv-flow and pass the result in.
+ * `new ArpcSDK(config)`, which calls `configure()`. Where that config comes
+ * from (env vars, a secrets manager, a config service) is the caller's business.
  */
 /**
  * Bearer-token store. The SDK authenticates lazily on the first gateway call:
@@ -21,11 +20,50 @@ export interface TokenCache {
 	set(token: string, expiresAt: Date): Promise<void>;
 }
 
-export interface ArpcConfig {
+/** FDR deployment target. Selects both hosts — see `ARPC_ENDPOINTS`. */
+export type ArpcEnvironment = "dev" | "stg" | "prd";
+
+/** The host pair a single environment resolves to. */
+export interface ArpcEndpoint {
 	/** OAuth host — token exchange only (`POST /v1/token`). */
-	oauthUrl: string;
+	readonly oauth: string;
 	/** API gateway host — every non-auth call. */
-	gatewayUrl: string;
+	readonly gateway: string;
+}
+
+/**
+ * Per-environment hosts. The two differ by domain, not just subdomain: the
+ * OAuth host is `ffngcp.com`, the gateway is `fdrgcp.com`.
+ *
+ * Frozen: this table backs both host resolution and environment validation, so
+ * a consumer mutating it would quietly change SDK behavior.
+ */
+export const ARPC_ENDPOINTS: Readonly<Record<ArpcEnvironment, ArpcEndpoint>> =
+	Object.freeze({
+		dev: Object.freeze({
+			oauth: "https://oauth.dev.ffngcp.com",
+			gateway: "https://apis-gateway-v2.dev.fdrgcp.com",
+		}),
+		stg: Object.freeze({
+			oauth: "https://oauth.stg.ffngcp.com",
+			gateway: "https://apis-gateway-v2.stg.fdrgcp.com",
+		}),
+		prd: Object.freeze({
+			oauth: "https://oauth.prd.ffngcp.com",
+			gateway: "https://apis-gateway-v2.prd.fdrgcp.com",
+		}),
+	});
+
+/**
+ * Narrow a raw string to an `ArpcEnvironment`. Useful when the value arrives
+ * untyped — an env var, a JSON config file, a request payload.
+ */
+export function isArpcEnvironment(value: string): value is ArpcEnvironment {
+	// Own keys only — `in` would also match inherited members like `toString`.
+	return Object.keys(ARPC_ENDPOINTS).includes(value);
+}
+
+export interface ArpcAuth {
 	/**
 	 * OAuth client_id (HTTP Basic username). Also used as the lead's
 	 * `seller_agent_email` — the OAuth identity is a registered DRA agent.
@@ -37,40 +75,61 @@ export interface ArpcConfig {
 	cache?: TokenCache;
 }
 
-let current: ArpcConfig | null = null;
+/**
+ * Escape hatch — per-host overrides of the `environment` defaults. Omit a key
+ * (or leave it `undefined`) to keep that environment's host.
+ */
+export interface ArpcUrls {
+	/** OAuth host — token exchange only (`POST /v1/token`). */
+	oauth?: string;
+	/** API gateway host — every non-auth call. */
+	gateway?: string;
+}
 
-/** Set the active config. Called by the `ArpcSDK` constructor. */
+export interface ArpcConfig {
+	/** Selects the FDR environment. Drives both hosts. */
+	environment: ArpcEnvironment;
+	auth: ArpcAuth;
+	urls?: ArpcUrls;
+}
+
+/** Config as the internals consume it — hosts resolved to concrete strings. */
+export interface ResolvedArpcConfig extends ArpcConfig {
+	urls: Required<ArpcUrls>;
+}
+
+let current: ResolvedArpcConfig | null = null;
+
+/**
+ * Fold the environment defaults together with any caller overrides. The guard
+ * looks unreachable given the types, but `environment` routinely arrives from
+ * somewhere untyped (an env var, a JSON config, a JS caller) — catch it here
+ * rather than letting `undefined` reach a request URL.
+ */
+function resolveUrls(config: ArpcConfig): Required<ArpcUrls> {
+	if (!isArpcEnvironment(config.environment)) {
+		throw new Error(
+			`Unknown environment: ${config.environment} (expected one of ${Object.keys(ARPC_ENDPOINTS).join(", ")})`,
+		);
+	}
+	const defaults = ARPC_ENDPOINTS[config.environment];
+	return {
+		oauth: config.urls?.oauth ?? defaults.oauth,
+		gateway: config.urls?.gateway ?? defaults.gateway,
+	};
+}
+
+/** Set the active config, resolving hosts once. Called by the `ArpcSDK` constructor. */
 export function configure(config: ArpcConfig): void {
-	current = config;
+	current = { ...config, urls: resolveUrls(config) };
 }
 
 /** Read the active config. Throws if the SDK hasn't been constructed yet. */
-export function getConfig(): ArpcConfig {
+export function getConfig(): ResolvedArpcConfig {
 	if (!current) {
 		throw new Error(
 			"ArpcSDK is not configured — construct `new ArpcSDK(config)` before making calls",
 		);
 	}
 	return current;
-}
-
-/**
- * Build a config from environment variables. Not used by the library itself —
- * only the dev scripts call this after loading `.env`.
- */
-export function configFromEnv(
-	env: NodeJS.ProcessEnv = process.env,
-): ArpcConfig {
-	const need = (key: string): string => {
-		const value = env[key];
-		if (!value)
-			throw new Error(`Missing required env var: ${key} (set it in .env)`);
-		return value;
-	};
-	return {
-		oauthUrl: need("FDR_OAUTH_URL"),
-		gatewayUrl: need("FDR_API_GATEWAY_URL"),
-		username: need("FDR_OAUTH_USERNAME"),
-		password: need("FDR_OAUTH_PASSWORD"),
-	};
 }
