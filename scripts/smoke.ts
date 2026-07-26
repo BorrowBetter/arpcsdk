@@ -12,7 +12,7 @@
  *   program-summary(gates DRA) → readiness → DRA.
  */
 import "dotenv-flow/config";
-import { ArpcSDK, isArpcEnvironment } from "../src";
+import { ArpcSDK } from "../src";
 import type {
 	DebtAccount,
 	LeadCondition,
@@ -32,12 +32,11 @@ const need = (key: string): string => {
 // Also the lead's seller_agent_email — see the fixture below.
 const username = need("ARPC_OAUTH_USERNAME");
 
-const environment = need("ARPC_ENVIRONMENT");
-if (!isArpcEnvironment(environment))
-	throw new Error(`Invalid ARPC_ENVIRONMENT: ${environment}`);
-
+// Pinned to STG deliberately, NOT read from the environment. This script drives
+// a real enrollment end-to-end against the canned Spinwheel test identity, which
+// only exists in STG — pointing it at PRD would create live applicant records.
 const sdk = new ArpcSDK({
-	environment,
+	environment: "stg",
 	auth: { username, password: need("ARPC_OAUTH_PASSWORD") },
 });
 

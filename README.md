@@ -164,7 +164,7 @@ const sdk = new ArpcSDK({
 });
 ```
 
-The table is exported as `ARPC_ENDPOINTS` if you need to read a host without constructing an SDK.
+The table is exported as `ARPC_ENDPOINTS` if you need to read a host without constructing an SDK. It's frozen — it backs both host resolution and environment validation, so mutating it isn't a supported way to redirect the SDK. Use `urls` for that.
 
 ## Token caching
 
@@ -217,12 +217,11 @@ pnpm build             # codegen + tsup → dist/ (esm + cjs + d.ts)
 `pnpm smoke` reads its credentials from `.env` (via dotenv-flow):
 
 ```bash
-ARPC_ENVIRONMENT=stg
 ARPC_OAUTH_USERNAME=...
 ARPC_OAUTH_PASSWORD=...
 ```
 
-These are the smoke script's, not the SDK's — the library never reads `process.env`.
+These are the smoke script's, not the SDK's — the library never reads `process.env`. The script pins `environment: "stg"` in code rather than taking it from `.env`: it drives a real enrollment against the canned STG test identity, so it must not be pointable at PRD.
 
 The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
 

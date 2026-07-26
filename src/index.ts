@@ -4,6 +4,7 @@ import { getARPCAchieveResolutionPartnerConnectAPI } from "./generated/arpc";
 export type {
 	ArpcAuth,
 	ArpcConfig,
+	ArpcEndpoint,
 	ArpcEnvironment,
 	ArpcUrls,
 	TokenCache,

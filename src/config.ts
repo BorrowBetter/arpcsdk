@@ -23,27 +23,36 @@ export interface TokenCache {
 /** FDR deployment target. Selects both hosts — see `ARPC_ENDPOINTS`. */
 export type ArpcEnvironment = "dev" | "stg" | "prd";
 
+/** The host pair a single environment resolves to. */
+export interface ArpcEndpoint {
+	/** OAuth host — token exchange only (`POST /v1/token`). */
+	readonly oauth: string;
+	/** API gateway host — every non-auth call. */
+	readonly gateway: string;
+}
+
 /**
  * Per-environment hosts. The two differ by domain, not just subdomain: the
  * OAuth host is `ffngcp.com`, the gateway is `fdrgcp.com`.
+ *
+ * Frozen: this table backs both host resolution and environment validation, so
+ * a consumer mutating it would quietly change SDK behavior.
  */
-export const ARPC_ENDPOINTS: Record<
-	ArpcEnvironment,
-	{ oauth: string; gateway: string }
-> = {
-	dev: {
-		oauth: "https://oauth.dev.ffngcp.com",
-		gateway: "https://apis-gateway-v2.dev.fdrgcp.com",
-	},
-	stg: {
-		oauth: "https://oauth.stg.ffngcp.com",
-		gateway: "https://apis-gateway-v2.stg.fdrgcp.com",
-	},
-	prd: {
-		oauth: "https://oauth.prd.ffngcp.com",
-		gateway: "https://apis-gateway-v2.prd.fdrgcp.com",
-	},
-};
+export const ARPC_ENDPOINTS: Readonly<Record<ArpcEnvironment, ArpcEndpoint>> =
+	Object.freeze({
+		dev: Object.freeze({
+			oauth: "https://oauth.dev.ffngcp.com",
+			gateway: "https://apis-gateway-v2.dev.fdrgcp.com",
+		}),
+		stg: Object.freeze({
+			oauth: "https://oauth.stg.ffngcp.com",
+			gateway: "https://apis-gateway-v2.stg.fdrgcp.com",
+		}),
+		prd: Object.freeze({
+			oauth: "https://oauth.prd.ffngcp.com",
+			gateway: "https://apis-gateway-v2.prd.fdrgcp.com",
+		}),
+	});
 
 /**
  * Narrow a raw string to an `ArpcEnvironment`. Useful when the value arrives
