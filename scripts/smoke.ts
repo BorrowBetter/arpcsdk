@@ -87,11 +87,15 @@ const ID = {
 	},
 };
 
-// Which tier + draft frequency this run enrolls into. Pinned so consecutive
-// runs are comparable; the program response offers three of each.
+// Which tier + draft frequency this run enrolls into. `regular` on purpose:
+// UW's overwrite (see selectSchedule) lands on Bi-Weekly, so choosing bi-weekly
+// here would mask it and 5b would report "intact" without having tested
+// anything. `regular` makes every run exercise the overwrite AND the re-select
+// that works around it. `split` is the third option but can't reach a DRA —
+// see the README gotchas.
 const CHOICE = {
 	evaluation_type: "Best Value",
-	draft_type: "bi-weekly",
+	draft_type: "regular",
 } as const;
 
 // The request takes the lowercase schedule code, the lead reports the Salesforce

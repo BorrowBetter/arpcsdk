@@ -78,6 +78,25 @@ const mustProperties = (spec: OpenAPIObject, name: string) => {
 	return properties;
 };
 
+/** Does a POST operation's JSON response body point at this component schema? */
+const responseRefs = (
+	spec: OpenAPIObject,
+	path: string,
+	code: string,
+	schemaName: string,
+): boolean => {
+	const response = spec.paths?.[path]?.post?.responses?.[code];
+	const ref =
+		response && !isRef(response)
+			? response.content?.["application/json"]?.schema
+			: undefined;
+	return isRef(ref) && ref.$ref === `#/components/schemas/${schemaName}`;
+};
+
+/** Same members, order-insensitive. */
+const sameValues = (a: readonly unknown[], b: readonly unknown[]): boolean =>
+	a.length === b.length && a.every((value) => b.includes(value));
+
 /** Repoint a POST operation's JSON response body at a component schema. */
 const repointResponse = (
 	spec: OpenAPIObject,
@@ -213,17 +232,29 @@ const readinessErrorEnvelope: Repair = {
 	},
 };
 
+/** What FDR documents for `LeadApplication.draft_type` — two of these don't exist. */
+const SPEC_DRAFT_TYPES = [
+	"Bi-Weekly",
+	"Monthly [Regular]",
+	"Twice Monthly [Split]",
+];
+/** What the API actually returns, confirmed against STG. */
+const LIVE_DRAFT_TYPES = ["Bi-Weekly", "Regular", "Split"];
+
 const leadDraftTypeValues: Repair = {
 	id: "lead-draft-type-values",
 	reason:
 		"LeadApplication.draft_type declares ['Bi-Weekly', 'Monthly [Regular]', 'Twice Monthly [Split]'], but STG returns 'Bi-Weekly', 'Regular' and 'Split'. Two of the three documented values do not exist — verified end-to-end against STG on 2026-08-08 by selecting each draft type in turn and reading the value back.",
 	reported: "2026-08-08",
+	// The whole enum is replaced, so the whole enum is what has to be proven —
+	// checking only for the bad value would let a fourth member FDR added get
+	// silently flattened away.
 	applies(spec) {
 		const draftType = schema(spec, "LeadApplication")?.properties?.draft_type;
 		return (
 			!isRef(draftType) &&
 			Array.isArray(draftType?.enum) &&
-			draftType.enum.includes("Monthly [Regular]")
+			sameValues(draftType.enum, SPEC_DRAFT_TYPES)
 		);
 	},
 	apply(spec) {
@@ -232,34 +263,37 @@ const leadDraftTypeValues: Repair = {
 			throw new Error(
 				"repair precondition failed: LeadApplication.draft_type is missing or a $ref",
 			);
-		draftType.enum = ["Bi-Weekly", "Regular", "Split"];
+		draftType.enum = [...LIVE_DRAFT_TYPES];
 		draftType.description = `Draft frequency type, as reported by the lead.${PATCHED}`;
 	},
 };
+
+const SELECT_PROGRAM_PATH = "/v1/application/program-selection";
 
 const selectProgramErrors: Repair = {
 	id: "select-program-error-responses",
 	reason:
 		"selectProgram's 401 and 500 point at ServerResponse, an empty `{type: object}` schema, where every other operation in the spec uses ARPCErrorResponse. Looks unintentional, and it generates a junk model.",
 	reported: "2026-08-08",
+	// Both codes are rewritten, so both have to be proven — a guard that checked
+	// only the 401 would keep firing after FDR fixed the 500 and would silently
+	// overwrite their fix.
 	applies(spec) {
-		const response =
-			spec.paths?.["/v1/application/program-selection"]?.post?.responses?.[
-				"401"
-			];
-		if (!response || isRef(response)) return false;
-		const ref = response.content?.["application/json"]?.schema;
-		return isRef(ref) && ref.$ref === "#/components/schemas/ServerResponse";
+		return ["401", "500"].every((code) =>
+			responseRefs(spec, SELECT_PROGRAM_PATH, code, "ServerResponse"),
+		);
 	},
 	apply(spec) {
 		for (const code of ["401", "500"]) {
-			repointResponse(
-				spec,
-				"/v1/application/program-selection",
-				code,
-				"ARPCErrorResponse",
-			);
+			repointResponse(spec, SELECT_PROGRAM_PATH, code, "ARPCErrorResponse");
 		}
+		// Only drop the schema once nothing points at it. FDR could start using
+		// ServerResponse somewhere legitimate, and deleting a live schema would
+		// break unrelated generated types.
+		if (JSON.stringify(spec).includes("#/components/schemas/ServerResponse"))
+			throw new Error(
+				"repair precondition failed: ServerResponse is still referenced elsewhere in the spec — it is no longer dead, so this repair must not delete it",
+			);
 		delete mustSchemas(spec).ServerResponse;
 	},
 };
