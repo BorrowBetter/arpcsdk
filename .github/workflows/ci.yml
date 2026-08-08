@@ -31,12 +31,10 @@ jobs:
         run: pnpm install
 
       # Build first — it runs codegen (orval) to produce src/generated/, which is
-      # gitignored and required by the typechecks below.
+      # gitignored and required by the typecheck below.
       - name: Build
         run: pnpm build
 
+      # Covers src, scripts, codegen.ts and openapi/ — see tsconfig.json.
       - name: Type check
         run: pnpm typecheck
-
-      - name: Type check scripts
-        run: pnpm typecheck:scripts

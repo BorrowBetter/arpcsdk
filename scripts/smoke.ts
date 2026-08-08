@@ -7,17 +7,21 @@
  * financial data live HERE, in the fixture below. Run: `pnpm smoke` (needs STG
  * creds in `.env`).
  *
- * Sequence: eligibility → registerV2 → program(poll) → lead → GET →
- *   PATCH conditions → uwV2 → send-email(if not auto-sent) → bank →
- *   program-summary(gates DRA) → readiness → DRA.
+ * Sequence: eligibility → registerV2 → program(poll) → pick schedule → lead →
+ *   GET → PATCH conditions → select-program → uwV2 → select-program again →
+ *   send-email(if not auto-sent) → bank → program-summary(gates DRA) →
+ *   readiness → DRA.
  */
 import "dotenv-flow/config";
-import { ArpcSDK } from "../src";
+import { ArpcSDK, DRAFT_TYPE_LABEL, draftTypeOf } from "../src";
 import type {
 	DebtAccount,
+	LeadApplication,
 	LeadCondition,
 	LeadPatchRequest,
 	PatchCondition,
+	PaymentSchedule,
+	PaymentScheduleOption,
 } from "../src/generated/model";
 
 // Env plumbing is this script's business, not the SDK's — the library takes a
@@ -83,11 +87,92 @@ const ID = {
 	},
 };
 
+// Which tier + draft frequency this run enrolls into. `regular` on purpose:
+// UW's overwrite (see selectSchedule) lands on Bi-Weekly, so choosing bi-weekly
+// here would mask it and 5b would report "intact" without having tested
+// anything. `regular` makes every run exercise the overwrite AND the re-select
+// that works around it. `split` is the third option but can't reach a DRA —
+// see the README gotchas.
+const CHOICE = {
+	evaluation_type: "Best Value",
+	draft_type: "regular",
+} as const;
+
+// The request takes the lowercase schedule code, the lead reports the Salesforce
+// label — see DRAFT_TYPE_LABEL in the SDK for why the two differ.
+const EXPECTED_DRAFT_TYPE = DRAFT_TYPE_LABEL[CHOICE.draft_type];
+
 const isHard = (c: LeadCondition): boolean => c?.type === "hard-condition";
 const verify = (c: LeadCondition): PatchCondition => ({
 	id: c?.id,
 	verified_by_debt_consultant: true,
 });
+
+const showTiers = (options: PaymentScheduleOption[] | null | undefined) => {
+	for (const tier of (options ?? []).filter((o) => o !== null)) {
+		const schedules = (tier.schedules ?? [])
+			.map((s) => `${s.draft_type} $${s.estimated_monthly_payment}/mo`)
+			.join(", ");
+		console.log(
+			`  ${tier.evaluation_type}: ${tier.program_length}mo, $${tier.program_cost} — ${schedules}`,
+		);
+	}
+};
+
+/** Resolve CHOICE against the tiers the program actually offered. */
+const pickSchedule = (
+	options: PaymentScheduleOption[] | null | undefined,
+): PaymentSchedule => {
+	const tiers = (options ?? []).filter((o) => o !== null);
+	const tier = tiers.find((o) => o.evaluation_type === CHOICE.evaluation_type);
+	if (!tier)
+		throw new Error(
+			`no "${CHOICE.evaluation_type}" tier in payment_schedule_options (offered: ${tiers.map((o) => o.evaluation_type).join(", ") || "none"})`,
+		);
+	const schedule = (tier.schedules ?? []).find(
+		(s) => s.draft_type === CHOICE.draft_type,
+	);
+	if (!schedule)
+		throw new Error(
+			`no "${CHOICE.draft_type}" schedule in the ${CHOICE.evaluation_type} tier (offered: ${(tier.schedules ?? []).map((s) => s.draft_type).join(", ") || "none"})`,
+		);
+	return schedule;
+};
+
+/** The three program fields the selection is supposed to move. */
+const programState = (app: LeadApplication | undefined) => ({
+	draft_type: app?.draft_type,
+	draft_amount: app?.draft_amount,
+	monthly_deposit: app?.monthly_deposit,
+});
+
+// Runs twice — once before UW and once after. UW submission rewrites the
+// selection to Bi-Weekly (observed on both `regular` and `split`, 2026-08-08),
+// so the post-UW call is the one that has to stick. Note this is invisible when
+// CHOICE is bi-weekly: the reset lands on the value we asked for.
+const selectSchedule = async (
+	faid: string,
+	schedule: PaymentSchedule,
+): Promise<LeadApplication | undefined> => {
+	const res = await sdk.api.selectProgram({
+		applicant: { fdr_applicant_id: faid },
+		draft_type: schedule.draft_type,
+		estimated_monthly_payment: schedule.estimated_monthly_payment,
+	});
+	if (res.status !== 200) {
+		show(res.status, res.data);
+		throw new Error("program selection failed");
+	}
+	const app = res.data.application;
+	console.log(JSON.stringify(programState(app)));
+	// Compare in the vocabulary we selected in — draftTypeOf() maps the lead's
+	// label back to a schedule code, which is the round-trip consumers depend on.
+	if (draftTypeOf(app) !== CHOICE.draft_type)
+		throw new Error(
+			`selection did not take: expected draft_type ${EXPECTED_DRAFT_TYPE}, got ${app?.draft_type ?? "none"}`,
+		);
+	return app;
+};
 
 async function main(): Promise<void> {
 	const ssn = randomTestSsn();
@@ -169,6 +254,12 @@ async function main(): Promise<void> {
 		payment_options: papp?.payment_options,
 	});
 
+	// Quote-time tiers. Shown for the record, NOT selected from — createLeadSync
+	// submits the income/expense picture and FDR recalculates the program, so the
+	// lead's own payment_schedule_options are the ones the selection must key off.
+	say("3b. Payment schedules offered at program time (pre-lead)");
+	showTiers(papp?.payment_schedule_options);
+
 	say("4. Create lead");
 	const lead = await sdk.api.createLeadSync({
 		other_debt_payments: 150,
@@ -193,9 +284,9 @@ async function main(): Promise<void> {
 		other_expenses_description: "smoke",
 		other_debt_expenses_description: "smoke",
 		income_expenses_comments: "smoke",
-		hardship_category: "Divorced",
+		hardship_category: "Divorce",
 		hardship_category_other: "smoke hardship",
-		goal_category: "Be Debt Free",
+		goal_category: "Get out of Debt",
 		goal_category_other: "smoke goal",
 		reference_id: referenceId,
 		seller_agent_email: sellerAgentEmail,
@@ -269,12 +360,36 @@ async function main(): Promise<void> {
 		verified_app_conditions: patchBody.conditions?.length ?? 0,
 	});
 
+	say("4d. Select program schedule (pre-UW)");
+	showTiers(gapp?.payment_schedule_options);
+	const schedule = pickSchedule(gapp?.payment_schedule_options);
+	console.log(
+		`chose ${CHOICE.evaluation_type} / ${schedule.draft_type} — $${schedule.estimated_monthly_payment}/mo (draft $${schedule.draft_deposit})`,
+	);
+	await selectSchedule(faid, schedule);
+
 	say("5. UW submission (v2)");
 	const uw = await sdk.api.uwSubmissionV2(faid);
 	const disclosureAutoSent =
 		uw.status === 200 && uw.data.banking_disclosure_email_sent === true;
 	show(uw.status, uw.data);
 	if (uw.status !== 200) throw new Error("UW submission not accepted");
+
+	say("5b. Did the selection survive UW?");
+	// Re-read the lead rather than reading uw.data.application — the UW response
+	// carries a thin projection (identity + status, no program fields), so it
+	// can't distinguish "reset" from "not included in this payload".
+	const postUw = await sdk.api.readLead(faid);
+	console.log(JSON.stringify(programState(postUw.data.application)));
+	const survived = draftTypeOf(postUw.data.application) === CHOICE.draft_type;
+	console.log(
+		survived
+			? `selection intact (${EXPECTED_DRAFT_TYPE})`
+			: `⚠️  UW overwrote it — expected ${EXPECTED_DRAFT_TYPE}, got ${postUw.data.application?.draft_type ?? "none"} (re-selecting below)`,
+	);
+
+	say("5c. Re-select program schedule (post-UW)");
+	await selectSchedule(faid, schedule);
 
 	say("6. Banking disclosure email");
 	if (disclosureAutoSent) {

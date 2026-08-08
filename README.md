@@ -75,8 +75,10 @@ sequenceDiagram
     Note over App,GW: Phase 3 — lead & underwriting
     App->>GW: createLeadSync()  POST /v3/application
     App->>GW: readLead() → patchLead()  clear hard-conditions
+    App->>GW: selectProgram()  POST /v1/application/program-selection
     App->>GW: uwSubmissionV2()  POST /v2/application/uw-submission/{id}
     GW-->>App: conditional approval (disclosure email suppressed)
+    App->>GW: selectProgram()  again — UW overwrites the selection
     App->>GW: sendEmail()  (only when not auto-sent)
 
     Note over App,GW: Phase 4 — enrollment & signing
@@ -93,8 +95,8 @@ sequenceDiagram
 **Auth** — handled for you. The SDK authenticates on the first `api` call, caches the token, and refreshes it automatically. See [Token caching](#token-caching) to control where the token lives.
 
 **Phase 1 — identity**
-- `checkEligibility()` — stateless quote (no PII). Its critical job: it **mints `fdr_applicant_id`**. Registration doesn't return the id yet, so call eligibility first. *(FDR is working on making registerV2 return the id — not shipped yet.)*
-- `registerApplicantV2()` — writes applicant PII and **kicks off an async credit pull**, which is why Phase 2 polls.
+- `checkEligibility()` — stateless quote (no PII). Its critical job: it **mints `fdr_applicant_id`**, which the rest of the flow threads through.
+- `registerApplicantV2()` — writes applicant PII and **kicks off an async credit pull**, which is why Phase 2 polls. As of spec 2026.16.0 it also returns `fdr_applicant_id` (generated server-side when the request omits it), so registration-first is now viable if you don't need the quote.
 
 **Phase 2 — program (poll it yourself)**
 - `generateProgramV1()` returns `202` + a `Retry-After` while the credit pull runs, then `200` with the program. **Loop until 200**, honoring `Retry-After` (usually ~12s, occasionally 20s+). See `scripts/smoke.ts` for the reference loop.
@@ -102,7 +104,9 @@ sequenceDiagram
 **Phase 3 — lead & underwriting**
 - `createLeadSync()` — promotes to a real lead. Data authority shifts to FDR/Salesforce here.
 - `readLead()` → `patchLead()` — the lead comes back with **hard-conditions** that block underwriting. Read their ids from `readLead()`, then `patchLead()` with each set `verified_by_debt_consultant: true`.
+- `selectProgram()` — commits the applicant to a payment schedule. Pick from the **lead's** `application.payment_schedule_options` (three tiers — Most Affordable / Best Value / Fastest — each with `regular`, `split` and `bi-weekly` schedules), then send the chosen `draft_type` + `estimated_monthly_payment`. See [Choosing a payment schedule](#choosing-a-payment-schedule).
 - `uwSubmissionV2()` — for these leads it comes back as **conditional approval almost every time**, which *suppresses* the automatic banking-disclosure email.
+- `selectProgram()` **again** — UW submission overwrites the selection with `Bi-Weekly`. Re-send the same schedule after UW, every time. See the gotcha below.
 - `sendEmail()` — send the disclosure manually **only when UW didn't auto-send** (check `uw.data.banking_disclosure_email_sent`). Full approval auto-sends; conditional approval suppresses.
 
 **Phase 4 — enrollment & signing**
@@ -120,6 +124,7 @@ sequenceDiagram
 | `generateProgramV1` | `POST /v1/application/program` (202 → … → 200 poll) |
 | `createLeadSync` | `POST /v3/application` |
 | `readLead` / `patchLead` | `GET` / `PATCH /v1/application/{id}` |
+| `selectProgram` | `POST /v1/application/program-selection` (commit to a payment schedule) |
 | `uwSubmissionV2` | `POST /v2/application/uw-submission/{id}` |
 | `sendEmail` | `POST /v1/application/send-email/{id}` (only if UW didn't auto-send) |
 | `updateApplicationBankDetails` | `PATCH /v1/application/bank-update/{id}` |
@@ -128,11 +133,47 @@ sequenceDiagram
 | `generateDra` | `POST /v2/application/{id}/dra` (DocuSign embedded signing URL) |
 | `leadTransfer` | `POST /v1/application/lead-transfer` (retail handoff — see below) |
 
+## Choosing a payment schedule
+
+`payment_schedule_options[]` appears on the eligibility, program and lead applications. Each entry is a tier (`evaluation_type`: `Most Affordable` / `Best Value` / `Fastest`) carrying `program_length`, `program_cost`, and a `schedules[]` breakdown by draft frequency (`regular`, `split`, `bi-weekly`) with `draft_deposit` and `estimated_monthly_payment`.
+
+```typescript
+const lead = await sdk.api.readLead(faid);
+const tier = lead.data.application?.payment_schedule_options
+  ?.find((o) => o?.evaluation_type === "Best Value");
+const schedule = tier?.schedules?.find((s) => s.draft_type === "bi-weekly");
+if (!schedule) throw new Error("Best Value / bi-weekly not offered");
+
+await sdk.api.selectProgram({
+  applicant: { fdr_applicant_id: faid },
+  draft_type: schedule.draft_type,                    // "bi-weekly"
+  estimated_monthly_payment: schedule.estimated_monthly_payment,
+});
+```
+
+Two things to know:
+
+- **Select from the lead's options, not the quote's.** Eligibility and `generateProgramV1()` return pre-lead estimates. `createLeadSync()` submits the full income/expense picture and FDR **recalculates the program**, so the lead's tiers differ — in a smoke run, `Best Value` moved from `$380/mo` to `$560/mo`. Pick after the lead exists.
+- **Request and response speak different vocabularies.** You send `draft_type: "bi-weekly" | "regular" | "split"`; the lead reports a capitalised label back on `application.draft_type` — `Bi-Weekly`, `Regular`, `Split`. (FDR's spec documents `Monthly [Regular]` and `Twice Monthly [Split]` for the latter two; neither value exists — see [Spec repairs](#spec-repairs).) The SDK exports the mapping so you don't hand-roll it:
+
+  ```typescript
+  import { DRAFT_TYPE_CODE, DRAFT_TYPE_LABEL, draftTypeOf } from "@borrowbetter/arpcsdk";
+
+  DRAFT_TYPE_LABEL["bi-weekly"];       // "Bi-Weekly" — what the lead will report
+  DRAFT_TYPE_CODE.Regular;             // "regular"   — what selectProgram accepts
+  draftTypeOf(lead.data.application);  // "bi-weekly" | undefined
+  ```
+
+  `draftTypeOf()` closes the round-trip: read a lead, get a value you can hand straight back to `selectProgram`. It returns `undefined` for a lead with no selection *and* for a label we don't recognise (the server can ship a new picklist value before we've regenerated).
+
 ## Error handling & gotchas
 
 - **Branch on `res.status`, not exceptions.** A gated call returns e.g. `{ status: 400, data: { error_code: "ER40301", … } }`.
+- **UW submission rewrites the program selection to `Bi-Weekly`.** Not a clear — an overwrite, with the draft amount changed to match. Observed on both `regular` and `split`. Always call `selectProgram()` again after `uwSubmissionV2()`. It's invisible if you selected bi-weekly in the first place, which is why it's easy to miss. Note the UW response's own `application` is a thin projection (identity + status, no program fields), so re-read the lead to check what actually happened.
 - **`ER40301` at UW is often transient** — the readiness check hasn't caught up with the condition-verify you just did (live eventual consistency). Retry the UW submission after a short delay before treating it as terminal.
-- **`ER40303` at DRA = missing draft/program dates** — a known FDR-side gap: the `dra` gate can reject on empty draft/program dates that no request field sets (they're backend-derived). Not a bug in your call.
+- **`ER40303` at DRA = the `dra` readiness gate rejected.** Read `error_details[]` for the specific field. The draft/program dates it checks are backend-derived — no request field sets them — so they're populated by `selectProgram()` and `createProgramSummaryTask()` upstream rather than by the DRA call itself. The one case with no workaround today is **`split`**, which always fails on `secondDraftDateMissing` ("Second draft date is required when draft type is split or bi-weekly"); bi-weekly passes the same check via `second_draft_date_bi_weekly`, which has no split equivalent. `bi-weekly` and `regular` complete end-to-end; reported to FDR.
+- **Hardship and goal fields are UW-required despite being spec-optional.** `CreateLeadRequest` marks nothing required, and lead creation happily returns `200` without them — then UW fails with `ER40301` / `HARDSHIP_CHECK_FAILED`. Empirically the gate needs **all three** of `hardship_category`, `hardship_category_other` and `goal_category`; `goal_category_other` is genuinely optional. Note `hardship_category_other` is required even when the category isn't `Other`, contradicting its own description — reported to FDR. Also don't trust the `field` on that error: it has been observed naming a field that *was* supplied.
+- **Read readiness failures off `error_details[]`, not `errors[]`.** Each `ReadinessCheck` now carries structured entries with a stable `reason_code` (`REQUIRED`, `DUPLICATE_EMAIL`, `CONDITION_NOT_VERIFIED`, `DEBT_TOTAL_MISMATCH`, …) and a dotted `field` path. `errors[]` is free text kept for compat — its wording changes.
 - **Conditional vs full approval changes the email path** — always check `banking_disclosure_email_sent` before deciding whether to call `sendEmail()`.
 - **Program timing varies** — the poll can take 20s+; don't set a tight timeout around the loop.
 
@@ -223,7 +264,24 @@ ARPC_OAUTH_PASSWORD=...
 
 These are the smoke script's, not the SDK's — the library never reads `process.env`. The script pins `environment: "stg"` in code rather than taking it from `.env`: it drives a real enrollment against the canned STG test identity, so it must not be pointable at PRD.
 
-The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.15.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
+The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.16.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
+
+The spec's `Authentication` tag is excluded from codegen (`input.filters`): it documents `POST /v1/token`, which lives on the OAuth host with HTTP Basic and a form-encoded body, while every generated operation runs through the ky mutator and targets the gateway. `src/auth.ts` owns that exchange.
+
+### Spec repairs
+
+The vendored spec is byte-identical to what FDR published. Defects we've reported to them are patched at codegen time by `openapi/repairs.ts` (wired in as orval's `input.override.transformer`), so **the generated types intentionally differ from FDR's published docs** in these places:
+
+| Repair | FDR ships | We generate |
+|---|---|---|
+| `program-selection-applicant` | `ProgramSelectionRequest.applicant` typed as the full registration `Applicant` — 10 required fields incl. `ssn`, `network_token` | `ProgramSelectionApplicant`, requiring only `fdr_applicant_id` — all the endpoint actually uses |
+| `readiness-error-envelope` | `ErrorDetails` / `ReadinessErrorResponse` deleted; UW readiness failures typed as `ARPCErrorResponse`, which has no `error_details` | Both schemas restored and the UW `400` repointed, so the readiness breakdown is typeable |
+| `lead-draft-type-values` | `LeadApplication.draft_type` enumerates `Bi-Weekly`, `Monthly [Regular]`, `Twice Monthly [Split]` | `Bi-Weekly`, `Regular`, `Split` — the values the API actually returns, confirmed against STG by selecting each in turn |
+| `select-program-error-responses` | `selectProgram` 401/500 → `ServerResponse`, an empty `{type: object}` | `ARPCErrorResponse`, matching every other operation; `ServerResponse` dropped |
+
+Each patched schema carries a `⚠️ Patched locally` note in its TSDoc, so the divergence is visible at the point of use.
+
+**Repairs are designed to expire loudly.** Every one asserts the defect is still present before patching, and `pnpm codegen` fails with an actionable message if it isn't — so a fix on FDR's side breaks the build instead of leaving a dead patch behind. There's also a version gate: bumping the spec throws until each repair has been re-validated and `VERIFIED_AGAINST` is updated. That speed bump is deliberate; don't downgrade it to a warning.
 
 ## Releasing
 
