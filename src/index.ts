@@ -10,6 +10,7 @@ export type {
 	TokenCache,
 } from "./config";
 export { ARPC_ENDPOINTS, isArpcEnvironment } from "./config";
+export { DRAFT_TYPE_CODE, DRAFT_TYPE_LABEL, draftTypeOf } from "./draft-type";
 export type * from "./generated/model";
 export type { HttpResponse } from "./http/client";
 

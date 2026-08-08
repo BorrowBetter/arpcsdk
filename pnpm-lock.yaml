@@ -27,6 +27,9 @@ importers:
       dotenv-flow:
         specifier: ^4.1.0
         version: 4.1.0
+      openapi3-ts:
+        specifier: ^4.6.1
+        version: 4.6.1
       orval:
         specifier: ^7.13.0
         version: 7.21.0(openapi-types@12.1.3)(typescript@5.9.3)
@@ -1831,6 +1834,9 @@ packages:
 
   openapi3-ts@4.5.0:
     resolution: {integrity: sha512-jaL+HgTq2Gj5jRcfdutgRGLosCy/hT8sQf6VOy+P+g36cZOjI1iukdPnijC+4CmeRzg/jEllJUboEic2FhxhtQ==}
+
+  openapi3-ts@4.6.1:
+    resolution: {integrity: sha512-XW9MOldkhoICNeXVzzmXzmOW5G73ppOEGmh7fLCqHjgfdEYCGGN+00MlVCeUZgovjjfC56j9tvtDt1zGabNjjA==}
 
   orval@7.21.0:
     resolution: {integrity: sha512-gG6aihg/BUiOgapn0qXsx3mgKU3L6iuzWtQJmvzdXavasyS0i+9e5j7kIpbdbeCYIEQX05kjBIzz5ZQlqzXCDA==}
@@ -4248,6 +4254,10 @@ snapshots:
   openapi-types@12.1.3: {}
 
   openapi3-ts@4.5.0:
+    dependencies:
+      yaml: 2.9.0
+
+  openapi3-ts@4.6.1:
     dependencies:
       yaml: 2.9.0
 
