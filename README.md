@@ -251,6 +251,7 @@ const sdk = new ArpcSDK({
 pnpm install
 pnpm codegen           # regenerate the typed client from the OpenAPI spec
 pnpm smoke             # drive the full flow end-to-end against live STG
+pnpm smoke <user-id>   # ... as a specific test identity (see scripts/test-users.ts)
 pnpm typecheck
 pnpm build             # codegen + tsup → dist/ (esm + cjs + d.ts)
 ```

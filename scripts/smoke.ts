@@ -3,9 +3,10 @@
  * against live STG using the SDK's passthrough client (`sdk.api.*`). Doubles as
  * the reference implementation of the call order + the program poll loop.
  *
- * The SDK is agnostic; the canned STG test identity (CORE SPINWHEEL) + the fixed
- * financial data live HERE, in the fixture below. Run: `pnpm smoke` (needs STG
- * creds in `.env`).
+ * The SDK is agnostic; the canned STG test identities live in
+ * `scripts/test-users.ts` and the shared test data (financials, mailing
+ * address, inbox) lives HERE. Run: `pnpm smoke [test-user-id]` (needs STG creds
+ * in `.env`); the id defaults to `DEFAULT_TEST_USER`.
  *
  * Sequence: eligibility → registerV2 → program(poll) → pick schedule → lead →
  *   GET → PATCH conditions → select-program → uwV2 → select-program again →
@@ -23,6 +24,7 @@ import type {
 	PaymentSchedule,
 	PaymentScheduleOption,
 } from "../src/generated/model";
+import { newSsn, resolveTestUser } from "./test-users";
 
 // Env plumbing is this script's business, not the SDK's — the library takes a
 // config object and never reads process.env.
@@ -37,7 +39,7 @@ const need = (key: string): string => {
 const username = need("ARPC_OAUTH_USERNAME");
 
 // Pinned to STG deliberately, NOT read from the environment. This script drives
-// a real enrollment end-to-end against the canned Spinwheel test identity, which
+// a real enrollment end-to-end against a canned Spinwheel test identity, which
 // only exists in STG — pointing it at PRD would create live applicant records.
 const sdk = new ArpcSDK({
 	environment: "stg",
@@ -49,42 +51,26 @@ const say = (s: string) => console.log(`\n\x1b[1m=== ${s} ===\x1b[0m`);
 const show = (status: number, data: unknown) =>
 	console.log(`status ${status}`, JSON.stringify(data, null, 2));
 
-// Per FDR (2026-06-16): randomize the first 5 SSN digits, keep the static last 4
-// (4123). The active-client match (ER40604) keys on the full SSN so a fresh
-// first-5 dodges it; the Spinwheel pull matches on the last 4 so 4123 keeps us
-// bound to the canned test identity.
-const randomTestSsn = (): string =>
-	`${Math.floor(10000 + Math.random() * 90000)}4123`;
+// Shared across every test user: none of these are tied to the canned Spinwheel
+// pull the way the identity fields in `test-users.ts` are.
+const EVENING_PHONE = "6632129216";
+// Mailosaur inbox — the banking disclosure email lands here. Unique per
+// applicant so concurrent runs don't share a mailbox.
+const MAILOSAUR_DOMAIN = "ljnoft7r.mailosaur.net";
+// Deliberately a different zip from the physical address, so the flow exercises
+// mailing ≠ physical.
+const MAILING_ADDRESS = {
+	line1: "123 MAIN STREET",
+	city: "TEMPE",
+	state: "AZ",
+	zip_code: "85280",
+	country: "US",
+};
 
 const nextPayDate = (daysOut = 14): string => {
 	const d = new Date();
 	d.setDate(d.getDate() + daysOut); // inside the 33-day UW window
 	return d.toISOString().slice(0, 10);
-};
-
-// Canonical Spinwheel test identity (phone/token are tied to the canned pull).
-const ID = {
-	firstName: "CORE",
-	lastName: "SPINWHEEL",
-	phone: "6629582324",
-	evening: "6632129216",
-	dob: "1990-04-13",
-	networkToken: "4e0cccc0-22e0-422c-a54d-79db70e2d0af",
-	// v2 register address is zip_code-only (the old zip/zip_code dual-send is gone).
-	address: {
-		line1: "123 MAIN STREET",
-		city: "TEMPE",
-		state: "AZ",
-		zip_code: "85288",
-		country: "US",
-	},
-	mailing: {
-		line1: "123 MAIN STREET",
-		city: "TEMPE",
-		state: "AZ",
-		zip_code: "85280",
-		country: "US",
-	},
 };
 
 // Which tier + draft frequency this run enrolls into. `regular` on purpose:
@@ -174,12 +160,14 @@ const selectSchedule = async (
 	return app;
 };
 
-async function main(): Promise<void> {
-	const ssn = randomTestSsn();
+async function main(userId?: string): Promise<void> {
+	const user = resolveTestUser(userId);
+	console.log(`test user: ${user.id}`);
+	const ssn = newSsn(user);
 	const nextPay = nextPayDate();
 	// The OAuth identity doubles as the lead's seller_agent_email (a registered DRA agent).
 	const sellerAgentEmail = username;
-	console.log(`test ssn: ${ssn} (random first-5 + static 4123)`);
+	console.log(`test ssn: ${ssn} (random first-5 + static ${user.ssnLast4})`);
 
 	// Auth is lazy — the first api call below exchanges credentials automatically.
 	say("1. Eligibility (mint applicant id)");
@@ -203,25 +191,25 @@ async function main(): Promise<void> {
 		throw new Error(
 			`no fdr_applicant_id from eligibility: ${JSON.stringify(elig.data)}`,
 		);
-	const email = `smoke-${faid}@ljnoft7r.mailosaur.net`;
+	const email = `smoke-${faid}@${MAILOSAUR_DOMAIN}`;
 	show(elig.status, { fdr_applicant_id: faid, email });
 
 	say("2. Register applicant (v2)");
 	const reg = await sdk.api.registerApplicantV2({
 		seller_agent_email: sellerAgentEmail,
 		applicant: {
-			first_name: ID.firstName,
-			last_name: ID.lastName,
+			first_name: user.firstName,
+			last_name: user.lastName,
 			email,
-			phone_number: ID.phone,
-			evening_phone_number: ID.evening,
-			date_of_birth: ID.dob,
+			phone_number: user.phone,
+			evening_phone_number: EVENING_PHONE,
+			date_of_birth: user.dob,
 			ssn,
 			fdr_applicant_id: faid,
 			consent_date: "2024-10-14",
-			network_token: ID.networkToken,
-			physical_address: ID.address,
-			mailing_address: ID.mailing,
+			network_token: user.networkToken,
+			physical_address: user.address,
+			mailing_address: MAILING_ADDRESS,
 		},
 	});
 	show(reg.status, reg.data);
@@ -293,15 +281,15 @@ async function main(): Promise<void> {
 		pull_credit_report: true,
 		debt_accounts: progDebtAccounts as unknown as DebtAccount[],
 		applicant: {
-			first_name: ID.firstName,
-			last_name: ID.lastName,
-			phone_number: ID.phone,
-			evening_phone_number: ID.evening,
+			first_name: user.firstName,
+			last_name: user.lastName,
+			phone_number: user.phone,
+			evening_phone_number: EVENING_PHONE,
 			social_security_number: ssn,
 			email,
-			date_of_birth: ID.dob,
-			current_address: ID.address,
-			mailing_address: ID.mailing,
+			date_of_birth: user.dob,
+			current_address: user.address,
+			mailing_address: MAILING_ADDRESS,
 			fdr_applicant_id: faid,
 			id: faid,
 			cbr_report_id: cbr,
@@ -448,7 +436,10 @@ async function main(): Promise<void> {
 	}
 }
 
-main().catch((err) => {
+// Positional arg picks the identity: `pnpm smoke core-spinwheel`. Undefined
+// (no arg) falls through to DEFAULT_TEST_USER; an unknown id fails here, before
+// any call goes out, with the list of known ones.
+main(process.argv[2]).catch((err) => {
 	console.error(err);
 	process.exit(1);
 });
