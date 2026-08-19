@@ -5,8 +5,9 @@
  *
  * The SDK is agnostic; the canned STG test identities live in
  * `scripts/test-users.ts` and the shared test data (financials, mailing
- * address, inbox) lives HERE. Run: `pnpm smoke [test-user-id]` (needs STG creds
- * in `.env`); the id defaults to `DEFAULT_TEST_USER`.
+ * address, inbox) lives HERE. Run: `pnpm smoke [test-user-id]
+ * [--force-hard-conditions]` (needs STG creds in `.env`); the id defaults to
+ * `DEFAULT_TEST_USER`.
  *
  * Sequence: eligibility → registerV2 → program(poll) → pick schedule → lead →
  *   GET → PATCH conditions → select-program → uwV2 → select-program again →
@@ -160,7 +161,10 @@ const selectSchedule = async (
 	return app;
 };
 
-async function main(userId?: string): Promise<void> {
+async function main(
+	userId?: string,
+	forceHardConditions = false,
+): Promise<void> {
 	const user = resolveTestUser(userId);
 	console.log(`test user: ${user.id}`);
 	const ssn = newSsn(user);
@@ -334,19 +338,30 @@ async function main(userId?: string): Promise<void> {
 		),
 	});
 
-	say("4c. PATCH verify hard-conditions");
-	const patchBody: LeadPatchRequest = {};
-	if (hardAppConds.length) patchBody.conditions = hardAppConds.map(verify);
-	if (hardDebtAccounts.length) {
-		patchBody.debt_accounts = hardDebtAccounts.map((d) => ({
-			id: d.id,
-			conditions: d.conditions.map(verify),
-		}));
+	// Clearing hard-conditions from here is a test-only shortcut — a debt
+	// consultant does it in a real enrollment. Off unless --force-hard-conditions
+	// is passed; without it any outstanding condition gates UW below
+	// (ER40301 / CONDITION_NOT_VERIFIED), which is the honest run.
+	if (forceHardConditions) {
+		say("4c. PATCH verify hard-conditions (--force-hard-conditions)");
+		const patchBody: LeadPatchRequest = {};
+		if (hardAppConds.length) patchBody.conditions = hardAppConds.map(verify);
+		if (hardDebtAccounts.length) {
+			patchBody.debt_accounts = hardDebtAccounts.map((d) => ({
+				id: d.id,
+				conditions: d.conditions.map(verify),
+			}));
+		}
+		const patched = await sdk.api.patchLead(faid, patchBody);
+		show(patched.status, {
+			verified_app_conditions: patchBody.conditions?.length ?? 0,
+		});
+	} else {
+		say("4c. Verify hard-conditions — skipped");
+		console.log(
+			`${hardAppConds.length} app + ${hardDebtAccounts.length} debt-account hard-conditions left unverified (pass --force-hard-conditions to verify them)`,
+		);
 	}
-	const patched = await sdk.api.patchLead(faid, patchBody);
-	show(patched.status, {
-		verified_app_conditions: patchBody.conditions?.length ?? 0,
-	});
 
 	say("4d. Select program schedule (pre-UW)");
 	showTiers(gapp?.payment_schedule_options);
@@ -437,9 +452,13 @@ async function main(userId?: string): Promise<void> {
 }
 
 // Positional arg picks the identity: `pnpm smoke core-spinwheel`. Undefined
-// (no arg) falls through to DEFAULT_TEST_USER; an unknown id fails here, before
-// any call goes out, with the list of known ones.
-main(process.argv[2]).catch((err) => {
+// (no arg) falls through to DEFAULT_TEST_USER; an unknown id fails inside main,
+// before any call goes out, with the list of known ones.
+const argv = process.argv.slice(2);
+main(
+	argv.find((a) => !a.startsWith("--")),
+	argv.includes("--force-hard-conditions"),
+).catch((err) => {
 	console.error(err);
 	process.exit(1);
 });
