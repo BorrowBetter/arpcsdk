@@ -57,6 +57,22 @@ export const TEST_USERS: Readonly<Record<string, TestUser>> = {
 		},
 		networkToken: "4e0cccc0-22e0-422c-a54d-79db70e2d0af",
 	},
+	"primary-spinwheel": {
+		id: "primary-spinwheel",
+		firstName: "PrimaryApp",
+		lastName: "Spinwheel",
+		phone: "6666669001",
+		dob: "1951-01-01",
+		ssnLast4: "9001",
+		address: {
+			line1: "123 Main Street",
+			city: "Tempe",
+			state: "AZ",
+			zip_code: "85288",
+			country: "US",
+		},
+		networkToken: "824ba438-f401-488d-b9ed-cd46e13a9bc4",
+	},
 };
 
 /** Who a run enrolls when it doesn't say. */
