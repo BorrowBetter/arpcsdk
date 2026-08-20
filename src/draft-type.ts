@@ -12,9 +12,10 @@ import type {
  * against what came back always looks like a failure.
  *
  * The labels below were confirmed against live STG by selecting each draft type
- * in turn, not read off the spec: FDR documents `Monthly [Regular]` and
- * `Twice Monthly [Split]`, and the API returns neither (see the
- * `lead-draft-type-values` repair in `openapi/repairs.ts`).
+ * in turn. Through 2026.16.0 the spec documented `Monthly [Regular]` and
+ * `Twice Monthly [Split]` for two of them and the API returned neither; 16.1
+ * corrected the response enum, so the generated types now agree with the wire.
+ * The two *vocabularies* remain — a corrected enum is not a unified one.
  *
  * Scope is narrow: `LeadApplication.draft_type` is the only label-valued site
  * in the whole spec. `PaymentSchedule` and `ProgramSelectionRequest` are both

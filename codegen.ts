@@ -3,7 +3,7 @@ import { repairSpec } from "./openapi/repairs";
 
 /**
  * Codegen config — generates a typed client from FDR's ARPC DEX spec
- * (v2026.16.0). Output (`src/generated/`) is gitignored and regenerated on
+ * (v2026.16.1). Output (`src/generated/`) is gitignored and regenerated on
  * build (`pnpm codegen` runs before `tsup`). To update, drop the new spec
  * JSON in `openapi/` and bump the `input.target` below.
  *
@@ -19,7 +19,7 @@ import { repairSpec } from "./openapi/repairs";
 export default defineConfig({
 	arpc: {
 		input: {
-			target: "./openapi/api-v2026.16.0.json",
+			target: "./openapi/api-v2026.16.1.json",
 			// The spec documents `POST /v1/token`, but it targets the OAuth host with
 			// HTTP Basic and a form-encoded body. Every generated op runs through the
 			// ky mutator, which routes to the gateway and sends JSON — so a generated

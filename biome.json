@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!**/dist", "!**/src/generated"]
+		"includes": ["**", "!**/dist", "!**/src/generated", "!**/openapi/*.json"]
 	},
 	"formatter": {
 		"enabled": true,

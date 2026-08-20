@@ -78,8 +78,9 @@ const nextPayDate = (daysOut = 14): string => {
 // UW's overwrite (see selectSchedule) lands on Bi-Weekly, so choosing bi-weekly
 // here would mask it and 5b would report "intact" without having tested
 // anything. `regular` makes every run exercise the overwrite AND the re-select
-// that works around it. `split` is the third option but can't reach a DRA —
-// see the README gotchas.
+// that works around it. `split` is the third option; as of 2026.16.1 it can
+// reach a DRA, but only with an extra PATCH setting `second_draft_date_split`
+// between UW and DRA — a branch this script doesn't drive yet.
 const CHOICE = {
 	evaluation_type: "Best Value",
 	draft_type: "regular",
@@ -380,8 +381,9 @@ async function main(
 
 	say("5b. Did the selection survive UW?");
 	// Re-read the lead rather than reading uw.data.application — the UW response
-	// carries a thin projection (identity + status, no program fields), so it
-	// can't distinguish "reset" from "not included in this payload".
+	// carries a thin projection (identity + status, no program fields; typed as
+	// UwSubmissionV2Application since 2026.16.1), so it can't distinguish
+	// "reset" from "not included in this payload".
 	const postUw = await sdk.api.readLead(faid);
 	console.log(JSON.stringify(programState(postUw.data.application)));
 	const survived = draftTypeOf(postUw.data.application) === CHOICE.draft_type;
