@@ -164,7 +164,10 @@ const programSelectionApplicantId: Repair = {
 	},
 	apply(spec) {
 		const applicant = mustSchema(spec, "ProgramSelectionApplicant");
-		applicant.required = ["fdr_applicant_id"];
+		// Append, don't replace: if FDR marks some other property required while
+		// still omitting this one, `applies()` stays true and a replacing patch
+		// would silently drop their requirement.
+		applicant.required = [...(applicant.required ?? []), "fdr_applicant_id"];
 		applicant.description = `${applicant.description ?? ""}${PATCHED}`;
 	},
 };
