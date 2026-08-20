@@ -154,7 +154,7 @@ await sdk.api.selectProgram({
 Two things to know:
 
 - **Select from the lead's options, not the quote's.** Eligibility and `generateProgramV1()` return pre-lead estimates. `createLeadSync()` submits the full income/expense picture and FDR **recalculates the program**, so the lead's tiers differ — in a smoke run, `Best Value` moved from `$380/mo` to `$560/mo`. Pick after the lead exists.
-- **Request and response speak different vocabularies.** You send `draft_type: "bi-weekly" | "regular" | "split"`; the lead reports a capitalised label back on `application.draft_type` — `Bi-Weekly`, `Regular`, `Split`. (FDR's spec documents `Monthly [Regular]` and `Twice Monthly [Split]` for the latter two; neither value exists — see [Spec repairs](#spec-repairs).) The SDK exports the mapping so you don't hand-roll it:
+- **Request and response speak different vocabularies.** You send `draft_type: "bi-weekly" | "regular" | "split"`; the lead reports a capitalised label back on `application.draft_type` — `Bi-Weekly`, `Regular`, `Split`. (Through 2026.16.0 the spec documented `Monthly [Regular]` and `Twice Monthly [Split]` for the latter two, neither of which the API returns; 16.1 corrected the enum. The two vocabularies still differ, so the mapping stays.) The SDK exports the mapping so you don't hand-roll it:
 
   ```typescript
   import { DRAFT_TYPE_CODE, DRAFT_TYPE_LABEL, draftTypeOf } from "@borrowbetter/arpcsdk";
@@ -169,11 +169,12 @@ Two things to know:
 ## Error handling & gotchas
 
 - **Branch on `res.status`, not exceptions.** A gated call returns e.g. `{ status: 400, data: { error_code: "ER40301", … } }`.
-- **UW submission rewrites the program selection to `Bi-Weekly`.** Not a clear — an overwrite, with the draft amount changed to match. Observed on both `regular` and `split`. Always call `selectProgram()` again after `uwSubmissionV2()`. It's invisible if you selected bi-weekly in the first place, which is why it's easy to miss. Note the UW response's own `application` is a thin projection (identity + status, no program fields), so re-read the lead to check what actually happened.
+- **UW submission rewrites the program selection to `Bi-Weekly`.** Not a clear — an overwrite, with the draft amount changed to match. Observed on both `regular` and `split`. Always call `selectProgram()` again after `uwSubmissionV2()`. It's invisible if you selected bi-weekly in the first place, which is why it's easy to miss. Note the UW response's own `application` is a thin projection (identity + status, no program fields — typed as `UwSubmissionV2Application` since 2026.16.1), so re-read the lead to check what actually happened.
 - **`ER40301` at UW is often transient** — the readiness check hasn't caught up with the condition-verify you just did (live eventual consistency). Retry the UW submission after a short delay before treating it as terminal.
-- **`ER40303` at DRA = the `dra` readiness gate rejected.** Read `error_details[]` for the specific field. The draft/program dates it checks are backend-derived — no request field sets them — so they're populated by `selectProgram()` and `createProgramSummaryTask()` upstream rather than by the DRA call itself. The one case with no workaround today is **`split`**, which always fails on `secondDraftDateMissing` ("Second draft date is required when draft type is split or bi-weekly"); bi-weekly passes the same check via `second_draft_date_bi_weekly`, which has no split equivalent. `bi-weekly` and `regular` complete end-to-end; reported to FDR.
+- **`ER40303` at DRA = the `dra` readiness gate rejected.** Read `error_details[]` for the specific field. The draft/program dates it checks are backend-derived — no request field sets them — so they're populated by `selectProgram()` and `createProgramSummaryTask()` upstream rather than by the DRA call itself. **`split` needs one extra call.** It fails the `secondDraftDateMissing` check ("Second draft date is required when draft type is split or bi-weekly") unless you `patchLead()` a `second_draft_date_split` **after UW submission and before generating the DRA** — added in 2026.16.1 in response to our report. Bi-weekly needs nothing: `second_draft_date_bi_weekly` is populated automatically at UW approval, and there is no patch field for it. `bi-weekly` and `regular` are what the smoke run exercises end-to-end; the `split` patch is documented but not yet driven by it.
 - **Hardship and goal fields are UW-required despite being spec-optional.** `CreateLeadRequest` marks nothing required, and lead creation happily returns `200` without them — then UW fails with `ER40301` / `HARDSHIP_CHECK_FAILED`. Empirically the gate needs **all three** of `hardship_category`, `hardship_category_other` and `goal_category`; `goal_category_other` is genuinely optional. Note `hardship_category_other` is required even when the category isn't `Other`, contradicting its own description — reported to FDR. Also don't trust the `field` on that error: it has been observed naming a field that *was* supplied.
-- **Read readiness failures off `error_details[]`, not `errors[]`.** Each `ReadinessCheck` now carries structured entries with a stable `reason_code` (`REQUIRED`, `DUPLICATE_EMAIL`, `CONDITION_NOT_VERIFIED`, `DEBT_TOTAL_MISMATCH`, …) and a dotted `field` path. `errors[]` is free text kept for compat — its wording changes.
+- **Readiness gates return the breakdown on `error_details`.** Since 2026.16.1 `ARPCErrorResponse.error_details` is a typed `ErrorDetails` (`checks[]`, `is_program_refresh_required`, `is_uw_approved`, `message`), so `ER40301` at UW and `ER40303`/`ER40305` at DRA are readable without a cast. Failures are documented as **`400`**; the `422` is now a separate generic `ER42200` for seller-config/upstream failures.
+- **Read per-check failures off `error_details[]`, not `errors[]`.** Each `ReadinessCheck` now carries structured entries with a stable `reason_code` (`REQUIRED`, `DUPLICATE_EMAIL`, `CONDITION_NOT_VERIFIED`, `DEBT_TOTAL_MISMATCH`, …) and a dotted `field` path. `errors[]` is free text kept for compat — its wording changes.
 - **Conditional vs full approval changes the email path** — always check `banking_disclosure_email_sent` before deciding whether to call `sendEmail()`.
 - **Program timing varies** — the poll can take 20s+; don't set a tight timeout around the loop.
 
@@ -266,7 +267,7 @@ ARPC_OAUTH_PASSWORD=...
 
 These are the smoke script's, not the SDK's — the library never reads `process.env`. The script pins `environment: "stg"` in code rather than taking it from `.env`: it drives a real enrollment against the canned STG test identity, so it must not be pointable at PRD.
 
-The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.16.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
+The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.16.1.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
 
 The spec's `Authentication` tag is excluded from codegen (`input.filters`): it documents `POST /v1/token`, which lives on the OAuth host with HTTP Basic and a form-encoded body, while every generated operation runs through the ky mutator and targets the gateway. `src/auth.ts` owns that exchange.
 
@@ -276,10 +277,10 @@ The vendored spec is byte-identical to what FDR published. Defects we've reporte
 
 | Repair | FDR ships | We generate |
 |---|---|---|
-| `program-selection-applicant` | `ProgramSelectionRequest.applicant` typed as the full registration `Applicant` — 10 required fields incl. `ssn`, `network_token` | `ProgramSelectionApplicant`, requiring only `fdr_applicant_id` — all the endpoint actually uses |
-| `readiness-error-envelope` | `ErrorDetails` / `ReadinessErrorResponse` deleted; UW readiness failures typed as `ARPCErrorResponse`, which has no `error_details` | Both schemas restored and the UW `400` repointed, so the readiness breakdown is typeable |
-| `lead-draft-type-values` | `LeadApplication.draft_type` enumerates `Bi-Weekly`, `Monthly [Regular]`, `Twice Monthly [Split]` | `Bi-Weekly`, `Regular`, `Split` — the values the API actually returns, confirmed against STG by selecting each in turn |
 | `select-program-error-responses` | `selectProgram` 401/500 → `ServerResponse`, an empty `{type: object}` | `ARPCErrorResponse`, matching every other operation; `ServerResponse` dropped |
+| `program-selection-applicant-id` | `ProgramSelectionApplicant.fdr_applicant_id` optional, so `{ applicant: {} }` type-checks and 400s at runtime | the one field the endpoint reads, marked `required` |
+
+2026.16.1 fixed three of the four repairs this file carried against 16.0 — the `draft_type` response enum, the `ProgramSelectionRequest.applicant` reference, and the readiness error envelope (`ARPCErrorResponse.error_details`). Their guards fired on the version bump and the repairs were deleted, which is the mechanism working as designed. Note `ReadinessErrorResponse` is no longer exported: readiness detail now hangs off `ARPCErrorResponse.error_details` as FDR's own `ErrorDetails`.
 
 Each patched schema carries a `⚠️ Patched locally` note in its TSDoc, so the divergence is visible at the point of use.
 

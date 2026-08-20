@@ -6,7 +6,12 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!**/dist", "!**/src/generated"]
+		"includes": [
+			"**",
+			"!**/dist",
+			"!**/src/generated",
+			"!**/openapi/api-v*.json"
+		]
 	},
 	"formatter": {
 		"enabled": true,

@@ -29,7 +29,7 @@ import type {
  * a spec bump should force a human to re-check each patch, since a guard can
  * only detect a defect disappearing, not one whose meaning quietly changed.
  */
-const VERIFIED_AGAINST = "2026.16.0";
+const VERIFIED_AGAINST = "2026.16.1";
 
 interface Repair {
 	/** Stable id, logged on every codegen run. */
@@ -69,13 +69,13 @@ const mustSchemas = (spec: OpenAPIObject) => {
 	return schemas;
 };
 
-const mustProperties = (spec: OpenAPIObject, name: string) => {
-	const properties = schema(spec, name)?.properties;
-	if (!properties)
+const mustSchema = (spec: OpenAPIObject, name: string): SchemaObject => {
+	const found = schema(spec, name);
+	if (!found)
 		throw new Error(
-			`repair precondition failed: components.schemas.${name} is missing, a $ref, or has no properties`,
+			`repair precondition failed: components.schemas.${name} is missing or a $ref`,
 		);
-	return properties;
+	return found;
 };
 
 /** Does a POST operation's JSON response body point at this component schema? */
@@ -92,10 +92,6 @@ const responseRefs = (
 			: undefined;
 	return isRef(ref) && ref.$ref === `#/components/schemas/${schemaName}`;
 };
-
-/** Same members, order-insensitive. */
-const sameValues = (a: readonly unknown[], b: readonly unknown[]): boolean =>
-	a.length === b.length && a.every((value) => b.includes(value));
 
 /** Repoint a POST operation's JSON response body at a component schema. */
 const repointResponse = (
@@ -122,158 +118,12 @@ const PATCHED =
 
 // ---------------------------------------------------------------------------
 
-const programSelectionApplicant: Repair = {
-	id: "program-selection-applicant",
-	reason:
-		"ProgramSelectionRequest.applicant $refs the full registration Applicant (10 required fields incl. ssn, network_token, physical_address), but the endpoint keys off fdr_applicant_id alone — FDR's own request example sends nothing else. As shipped, a generated client can't call it without a cast, and the type implies we should re-send PII on a schedule-selection call.",
-	reported: "2026-08-08",
-	applies(spec) {
-		const applicant = schema(spec, "ProgramSelectionRequest")?.properties
-			?.applicant;
-		return (
-			isRef(applicant) && applicant.$ref === "#/components/schemas/Applicant"
-		);
-	},
-	apply(spec) {
-		mustSchemas(spec).ProgramSelectionApplicant = {
-			type: "object",
-			required: ["fdr_applicant_id"],
-			description: `Applicant reference for a program selection — the id is all this endpoint uses.${PATCHED}`,
-			properties: {
-				fdr_applicant_id: {
-					type: "string",
-					description:
-						"FDR applicant ID — the applicant's passport across all systems.",
-					example: "285b4549a62g7d3",
-				},
-			},
-		};
-		mustProperties(spec, "ProgramSelectionRequest").applicant = {
-			$ref: "#/components/schemas/ProgramSelectionApplicant",
-		};
-	},
-};
-
-const readinessErrorEnvelope: Repair = {
-	id: "readiness-error-envelope",
-	reason:
-		"2026.16.0 deleted ErrorDetails and ReadinessErrorResponse, but STG still returns exactly that shape when UW submission hits a readiness gate (400 ER40301, body carries error_details.checks[]). The spec now points that response at ARPCErrorResponse, which has no error_details object — so the payload carrying the readiness breakdown is untypeable.",
-	reported: "2026-08-08",
-	applies(spec) {
-		const schemas = spec.components?.schemas ?? {};
-		return (
-			!("ErrorDetails" in schemas) && !("ReadinessErrorResponse" in schemas)
-		);
-	},
-	apply(spec) {
-		const schemas = mustSchemas(spec);
-		schemas.ErrorDetails = {
-			type: "object",
-			description: `Readiness check breakdown returned inside a gated error response.${PATCHED}`,
-			properties: {
-				checks: {
-					type: "array",
-					description: "Per-gate check results",
-					items: { $ref: "#/components/schemas/ReadinessCheck" },
-				},
-				is_program_refresh_required: {
-					type: "boolean",
-					description:
-						"Whether a program refresh is required before re-submission",
-					example: false,
-				},
-				is_uw_approved: {
-					type: "boolean",
-					description: "Whether the application is currently UW-approved",
-					example: false,
-				},
-				message: {
-					type: "string",
-					description: "Human-readable summary of the gate failure",
-					example: "Application needs to be approved by Underwriter",
-				},
-			},
-		};
-		schemas.ReadinessErrorResponse = {
-			type: "object",
-			description: `Error body returned when a readiness gate blocks UW submission. Observed live as a 400 with error_code ER40301.${PATCHED}`,
-			properties: {
-				status: { type: "integer", format: "int32", example: 400 },
-				error: {
-					type: "string",
-					description: "Short error message",
-					example: "UW readiness check failed",
-				},
-				error_code: {
-					type: "string",
-					description: "Error classification code",
-					example: "ER40301",
-				},
-				timestamp: {
-					type: "string",
-					description: "UTC timestamp of the error",
-					example: "2026-08-08T14:56:20.933058286Z",
-				},
-				x_correlation_id: {
-					type: "string",
-					description: "Correlation ID for distributed tracing",
-					example: "0ebfccae-3a9f-495b-bc86-97e064372227",
-				},
-				error_details: { $ref: "#/components/schemas/ErrorDetails" },
-			},
-		};
-
-		repointResponse(
-			spec,
-			"/v2/application/uw-submission/{fdrApplicantId}",
-			"400",
-			"ReadinessErrorResponse",
-		);
-	},
-};
-
-/** What FDR documents for `LeadApplication.draft_type` — two of these don't exist. */
-const SPEC_DRAFT_TYPES = [
-	"Bi-Weekly",
-	"Monthly [Regular]",
-	"Twice Monthly [Split]",
-];
-/** What the API actually returns, confirmed against STG. */
-const LIVE_DRAFT_TYPES = ["Bi-Weekly", "Regular", "Split"];
-
-const leadDraftTypeValues: Repair = {
-	id: "lead-draft-type-values",
-	reason:
-		"LeadApplication.draft_type declares ['Bi-Weekly', 'Monthly [Regular]', 'Twice Monthly [Split]'], but STG returns 'Bi-Weekly', 'Regular' and 'Split'. Two of the three documented values do not exist — verified end-to-end against STG on 2026-08-08 by selecting each draft type in turn and reading the value back.",
-	reported: "2026-08-08",
-	// The whole enum is replaced, so the whole enum is what has to be proven —
-	// checking only for the bad value would let a fourth member FDR added get
-	// silently flattened away.
-	applies(spec) {
-		const draftType = schema(spec, "LeadApplication")?.properties?.draft_type;
-		return (
-			!isRef(draftType) &&
-			Array.isArray(draftType?.enum) &&
-			sameValues(draftType.enum, SPEC_DRAFT_TYPES)
-		);
-	},
-	apply(spec) {
-		const draftType = mustProperties(spec, "LeadApplication").draft_type;
-		if (!draftType || isRef(draftType))
-			throw new Error(
-				"repair precondition failed: LeadApplication.draft_type is missing or a $ref",
-			);
-		draftType.enum = [...LIVE_DRAFT_TYPES];
-		draftType.description = `Draft frequency type, as reported by the lead.${PATCHED}`;
-	},
-};
-
 const SELECT_PROGRAM_PATH = "/v1/application/program-selection";
 
 const selectProgramErrors: Repair = {
 	id: "select-program-error-responses",
 	reason:
-		"selectProgram's 401 and 500 point at ServerResponse, an empty `{type: object}` schema, where every other operation in the spec uses ARPCErrorResponse. Looks unintentional, and it generates a junk model.",
+		"selectProgram's 401 and 500 point at ServerResponse, an empty `{type: object}` schema, where every other operation in the spec uses ARPCErrorResponse. Looks unintentional, and it generates a junk model. The 2026.16.1 changelog claims this was fixed; the shipped JSON still says ServerResponse, so it wasn't.",
 	reported: "2026-08-08",
 	// Both codes are rewritten, so both have to be proven — a guard that checked
 	// only the 401 would keep firing after FDR fixed the 500 and would silently
@@ -298,14 +148,33 @@ const selectProgramErrors: Repair = {
 	},
 };
 
+const programSelectionApplicantId: Repair = {
+	id: "program-selection-applicant-id",
+	reason:
+		"2026.16.1 introduced ProgramSelectionApplicant (good — the request no longer $refs the full registration Applicant), but left its one property optional. fdr_applicant_id is the only thing the endpoint reads, and omitting it is a 400 (ER40001, `applicant.fdr_applicant_id is required` — FDR's own example). As shipped, `selectProgram({ applicant: {} })` type-checks.",
+	reported: "2026-08-19",
+	applies(spec) {
+		const applicant = schema(spec, "ProgramSelectionApplicant");
+		// Membership, not absence: SpringDoc can emit `required: []`, which leaves
+		// the field just as optional but would read as "fixed" and break the build.
+		return (
+			!!applicant?.properties?.fdr_applicant_id &&
+			!applicant.required?.includes("fdr_applicant_id")
+		);
+	},
+	apply(spec) {
+		const applicant = mustSchema(spec, "ProgramSelectionApplicant");
+		// Append, don't replace: if FDR marks some other property required while
+		// still omitting this one, `applies()` stays true and a replacing patch
+		// would silently drop their requirement.
+		applicant.required = [...(applicant.required ?? []), "fdr_applicant_id"];
+		applicant.description = `${applicant.description ?? ""}${PATCHED}`;
+	},
+};
+
 // ---------------------------------------------------------------------------
 
-const REPAIRS: Repair[] = [
-	programSelectionApplicant,
-	readinessErrorEnvelope,
-	leadDraftTypeValues,
-	selectProgramErrors,
-];
+const REPAIRS: Repair[] = [selectProgramErrors, programSelectionApplicantId];
 
 /** orval `input.override.transformer` — see `codegen.ts`. */
 export const repairSpec = (spec: OpenAPIObject): OpenAPIObject => {
