@@ -18,10 +18,24 @@ jobs:
       id-token: write
 
     steps:
+      # The version-bump push below goes straight to main, which the
+      # org-require-pr-review ruleset forbids for everyone except the
+      # borrowbetter-automation app. GITHUB_TOKEN cannot be a ruleset bypass
+      # actor, so the push has to carry an app installation token.
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Persisted into .git/config, which is what authenticates the
+          # `git push` in Version packages.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -42,6 +56,11 @@ jobs:
 
       # A manual run publishes the current version; a push with pending changesets
       # versions first, then publishes.
+      #
+      # The [skip ci] on the version commit matters now that the push carries an
+      # app token: unlike GITHUB_TOKEN, an app-token push DOES trigger
+      # workflows. Without it every release re-fires this workflow (a no-op --
+      # the changesets are consumed) plus the full three-version CI matrix.
       - name: Plan
         id: plan
         run: |
@@ -63,9 +82,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           pnpm changeset version
           git add .
-          git commit -m "chore: version packages"
+          git commit -m "chore: version packages [skip ci]"
           git push
         env:
+          # Deliberately NOT the app token: @changesets/changelog-github reads
+          # pull request metadata to build the changelog, and the app is scoped
+          # to contents only. GITHUB_TOKEN keeps doing that half of the job.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Rebuild after version bump
