@@ -295,6 +295,11 @@ Releases are automated via [Changesets](https://github.com/changesets/changesets
    pnpm changeset
    ```
    Pick the bump (patch/minor/major) and write a summary. Commit the generated `.changeset/*.md` alongside your code.
-2. Merge to `main`. The **Release** workflow (`.github/workflows/release.yml`) then runs `changeset version` (bumps `package.json` + updates `CHANGELOG.md`, consuming the changeset), commits `chore: version packages`, and publishes to npm.
+2. Merge to `main`. The **Release** workflow (`.github/workflows/release.yml`) runs `changeset version` (bumps `package.json` + updates `CHANGELOG.md`, consuming the changeset) on a `changeset-release/main` branch and opens a **chore: version packages** PR.
+3. The same workflow run waits on that PR's checks and squash-merges it as soon as they're all green — no action needed from you. That merge lands on `main`, re-triggers Release with no changesets pending, and *that* run publishes to npm.
 
-Publishing uses **npm OIDC trusted publishing** — no `NPM_TOKEN` secret. The trusted-publisher policy on npm is scoped to this repo + the `release.yml` workflow.
+Nothing is pushed to `main` directly; the org rulesets don't allow it. Every repo-facing step runs as the `borrowbetter-automation` GitHub App, which is a `pull_request`-mode bypass actor on `org-require-pr-review` — that's what lets it merge a mechanical version bump without a human approval while still forcing the change through a PR. The merge gate is *every* check on the PR, not just the contexts the ruleset marks required, so a red typecheck stops the release even though CI isn't a required context.
+
+If a release stalls, look for an open `chore: version packages` PR: a failed check leaves it sitting there and turns the Release run red. Fix forward on `main` and the next push rebuilds the branch from scratch.
+
+Publishing uses **npm OIDC trusted publishing** — no `NPM_TOKEN` secret. The trusted-publisher policy on npm is scoped to this repo + the `release.yml` workflow, so don't rename or move that file. `workflow_dispatch` publishes whatever version `package.json` currently holds, for when a bump landed but the publish didn't.

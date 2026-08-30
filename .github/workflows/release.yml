@@ -13,15 +13,25 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    # The merge step blocks on the version PR's checks; cap it so a check that
+    # never reports fails the run instead of holding a runner for six hours.
+    timeout-minutes: 30
     permissions:
-      contents: write
+      # Everything that writes to the repo uses the app token below, not
+      # GITHUB_TOKEN. id-token is for npm's OIDC exchange.
+      contents: read
       id-token: write
 
     steps:
-      # The version-bump push below goes straight to main, which the
-      # org-require-pr-review ruleset forbids for everyone except the
-      # borrowbetter-automation app. GITHUB_TOKEN cannot be a ruleset bypass
-      # actor, so the push has to carry an app installation token.
+      # Every repo-facing action — pushing the version branch, opening the PR,
+      # merging it — runs as the borrowbetter-automation app. Nothing reaches
+      # main except through a PR; the app is a `pull_request`-mode bypass actor
+      # on org-require-pr-review, which is what lets it merge its own version
+      # PR without a human approving a mechanical bump.
+      #
+      # GITHUB_TOKEN can't stand in here on two counts: it can't be a ruleset
+      # bypass actor, and PRs it opens don't trigger workflows — the version PR
+      # would sit there with no checks to wait on.
       - name: Mint app token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -34,7 +44,7 @@ jobs:
         with:
           fetch-depth: 0
           # Persisted into .git/config, which is what authenticates the
-          # `git push` in Version packages.
+          # `git push` in Open version PR.
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install pnpm
@@ -50,48 +60,95 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      # Build runs codegen (orval) → src/generated/, then tsup → dist/.
-      - name: Build
-        run: pnpm build
-
-      # A manual run publishes the current version; a push with pending changesets
-      # versions first, then publishes.
-      #
-      # The [skip ci] on the version commit matters now that the push carries an
-      # app token: unlike GITHUB_TOKEN, an app-token push DOES trigger
-      # workflows. Without it every release re-fires this workflow (a no-op --
-      # the changesets are consumed) plus the full three-version CI matrix.
+      # Three mutually exclusive outcomes:
+      #   manual run          → publish whatever version package.json holds
+      #   pending changesets  → open the version PR; its merge re-runs this
+      #                         workflow, and that run publishes
+      #   nothing pending     → publish iff package.json's version is new to npm
+      #                         (i.e. we are the version PR's merge). Ordinary
+      #                         merges to main land here and no-op.
       - name: Plan
         id: plan
         run: |
+          set -euo pipefail
+          version=false
+          publish=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=false" >> "$GITHUB_OUTPUT"
-            echo "publish=true"  >> "$GITHUB_OUTPUT"
-          elif ls .changeset/*.md 2>/dev/null | grep -v README.md > /dev/null; then
-            echo "version=true" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            publish=true
+          elif [ -n "$(find .changeset -maxdepth 1 -name '*.md' ! -name README.md -print -quit)" ]; then
+            version=true
           else
-            echo "version=false" >> "$GITHUB_OUTPUT"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+            pkg=$(node -p "require('./package.json').name")
+            ver=$(node -p "require('./package.json').version")
+            if [ -z "$(npm view "$pkg@$ver" version 2>/dev/null)" ]; then
+              publish=true
+            fi
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
-      - name: Version packages
+      - name: Open version PR
+        id: version-pr
         if: steps.plan.outputs.version == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # @changesets/changelog-github reads pull request metadata to build
+          # the changelog entries.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
+          branch=changeset-release/main
+
+          # Author the commit as the app's own bot user. org-require-pr-review
+          # sets require_extra_approval_for_unattributed_changes, and there's no
+          # human on this PR to supply that extra approval.
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
           pnpm changeset version
           git add .
-          git commit -m "chore: version packages [skip ci]"
-          git push
-        env:
-          # Deliberately NOT the app token: @changesets/changelog-github reads
-          # pull request metadata to build the changelog, and the app is scoped
-          # to contents only. GITHUB_TOKEN keeps doing that half of the job.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git commit -m "chore: version packages"
+          # Force-push: a version PR left open by an earlier failed run is stale
+          # by definition — its changesets are still in main and get re-consumed
+          # here, so the rebuilt branch supersedes it.
+          git push --force origin "HEAD:refs/heads/$branch"
 
-      - name: Rebuild after version bump
+          pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            gh pr create --base main --head "$branch" \
+              --title "chore: version packages" \
+              --body "Consumes the pending changesets: bumps \`package.json\` and updates \`CHANGELOG.md\`. Opened by the Release workflow, which merges it once checks are green; that merge triggers the npm publish."
+            pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      # Gates on *every* check the PR collects, not just the ones the org
+      # ruleset marks required — the CI matrix isn't a required context, and
+      # we'd rather not publish off a red typecheck.
+      - name: Merge version PR on green
         if: steps.plan.outputs.version == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.version-pr.outputs.pr }}
+        run: |
+          set -euo pipefail
+          # `gh pr checks --watch` exits non-zero when nothing has reported yet,
+          # so wait for the checks to register before handing off to it.
+          for _ in $(seq 1 30); do
+            n=$(gh pr view "$PR" --json statusCheckRollup --jq '.statusCheckRollup | length')
+            [ "$n" -gt 0 ] && break
+            sleep 10
+          done
+          gh pr checks "$PR" --watch --fail-fast --interval 15
+          # Merging pushes main, which re-runs this workflow with no changesets
+          # pending — that run does the publish.
+          gh pr merge "$PR" --squash --delete-branch
+
+      # Build runs codegen (orval) → src/generated/, then tsup → dist/.
+      - name: Build
+        if: steps.plan.outputs.publish == 'true'
         run: pnpm build
 
       # Trusted publishing (OIDC) — no NPM_TOKEN. Needs npm >= 11.5.1; node 24's
