@@ -302,4 +302,6 @@ Nothing is pushed to `main` directly; the org rulesets don't allow it. Every rep
 
 If a release stalls, look for an open `chore: version packages` PR: a failed check leaves it sitting there and turns the Release run red. Fix forward on `main` and the next push rebuilds the branch from scratch.
 
+> **Never write the literal CI-skip token in a commit message or PR body.** GitHub honours it anywhere in the message, not just the first line, and squash merges here inherit the branch's commit messages (`squash_merge_commit_message: COMMIT_MESSAGES`). Mentioning it in prose — even in backticks, even to say you removed it — silently suppresses CI on the PR and Release on the merge, which is exactly the run that publishes. It cost this repo a day of green-looking PRs with no CI on them. Write it as "the skip-ci marker" instead.
+
 Publishing uses **npm OIDC trusted publishing** — no `NPM_TOKEN` secret. The trusted-publisher policy on npm is scoped to this repo + the `release.yml` workflow, so don't rename or move that file. `workflow_dispatch` publishes whatever version `package.json` currently holds, for when a bump landed but the publish didn't.
