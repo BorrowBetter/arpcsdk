@@ -295,6 +295,9 @@ Releases are automated via [Changesets](https://github.com/changesets/changesets
    pnpm changeset
    ```
    Pick the bump (patch/minor/major) and write a summary. Commit the generated `.changeset/*.md` alongside your code.
-2. Merge to `main`. The **Release** workflow (`.github/workflows/release.yml`) then runs `changeset version` (bumps `package.json` + updates `CHANGELOG.md`, consuming the changeset), commits `chore: version packages`, and publishes to npm.
+2. Merge to `main`. The **Release** workflow (`.github/workflows/release.yml`) runs `changeset version` (bumps `package.json` + updates `CHANGELOG.md`, consuming the changeset) and opens a **`chore: version packages`** pull request with auto-merge armed.
+3. That PR merges itself once CI and the Aikido scan pass. The merge fires **Release** again; this run finds no pending changesets and the new version missing from npm, so it publishes.
+
+The bump goes through a pull request rather than straight to `main` so the security scan actually gates it — a required status check can only apply to a commit that has a PR. Nothing to do by hand either way; it is two runs instead of one.
 
 Publishing uses **npm OIDC trusted publishing** — no `NPM_TOKEN` secret. The trusted-publisher policy on npm is scoped to this repo + the `release.yml` workflow.

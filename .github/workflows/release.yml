@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     branches: [main]
-  # Manual trigger publishes the current package.json version (no versioning) —
-  # e.g. to (re)publish a version that was bumped but isn't on npm yet.
+  # Manual trigger publishes the current package.json version if npm does not
+  # have it yet -- e.g. to recover a version whose publish step failed.
   workflow_dispatch:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
@@ -15,13 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
       id-token: write
 
     steps:
-      # The version-bump push below goes straight to main, which the
-      # org-require-pr-review ruleset forbids for everyone except the
-      # borrowbetter-automation app. GITHUB_TOKEN cannot be a ruleset bypass
-      # actor, so the push has to carry an app installation token.
+      # The version bump reaches main through a pull request, not a direct push,
+      # so that Aikido actually scans it -- the org-require-security-scan
+      # ruleset can only gate a commit that has a PR. GITHUB_TOKEN cannot be a
+      # ruleset bypass actor, so the branch push and the merge both have to
+      # carry an app installation token.
       - name: Mint app token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -33,8 +35,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # Persisted into .git/config, which is what authenticates the
-          # `git push` in Version packages.
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install pnpm
@@ -50,48 +50,70 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      # Build runs codegen (orval) → src/generated/, then tsup → dist/.
-      - name: Build
-        run: pnpm build
-
-      # A manual run publishes the current version; a push with pending changesets
-      # versions first, then publishes.
+      # Versioning and publishing are two separate runs now, because the bump
+      # has to go through a PR and this run cannot wait for that PR to merge.
       #
-      # The [skip ci] on the version commit matters now that the push carries an
-      # app token: unlike GITHUB_TOKEN, an app-token push DOES trigger
-      # workflows. Without it every release re-fires this workflow (a no-op --
-      # the changesets are consumed) plus the full three-version CI matrix.
+      # Run 1 (push to main, changesets pending): open the version PR, stop.
+      # Run 2 (the version PR auto-merges, firing push again): no changesets are
+      # left, package.json carries the new version, npm does not have it -- so
+      # publish.
+      #
+      # "Is this version already on npm?" replaces the old
+      # publish-iff-we-just-versioned rule. It has to, because every ordinary
+      # merge to main also arrives with no changesets pending; the npm check is
+      # what tells the version merge apart from a normal one. It doubles as the
+      # workflow_dispatch recovery path at no extra cost.
       - name: Plan
         id: plan
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=false" >> "$GITHUB_OUTPUT"
-            echo "publish=true"  >> "$GITHUB_OUTPUT"
-          elif ls .changeset/*.md 2>/dev/null | grep -v README.md > /dev/null; then
-            echo "version=true" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=false" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && ls .changeset/*.md 2>/dev/null | grep -v README.md > /dev/null; then
+            echo "version=true"  >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Version packages
-        if: steps.plan.outputs.version == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          pnpm changeset version
-          git add .
-          git commit -m "chore: version packages [skip ci]"
-          git push
-        env:
-          # Deliberately NOT the app token: @changesets/changelog-github reads
-          # pull request metadata to build the changelog, and the app is scoped
-          # to contents only. GITHUB_TOKEN keeps doing that half of the job.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "version=false" >> "$GITHUB_OUTPUT"
 
-      - name: Rebuild after version bump
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version > /dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$NAME@$VERSION is not on npm"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Creates or updates the changeset-release/main branch and its PR. The app
+      # token rather than GITHUB_TOKEN: this both pushes the branch and opens the
+      # PR, and @changesets/changelog-github reads pull request metadata to build
+      # the changelog -- all of which the app can now do, since it carries
+      # pull_requests: write alongside contents: write.
+      - name: Open version PR
+        id: changesets
         if: steps.plan.outputs.version == 'true'
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      # Auto-merge rather than a straight merge: it is what makes the Aikido
+      # check a real gate. The app bypasses the review requirement, so a direct
+      # merge would land before the scan ever reported.
+      - name: Enable auto-merge on the version PR
+        if: steps.changesets.outputs.pullRequestNumber != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh pr merge ${{ steps.changesets.outputs.pullRequestNumber }} --auto --squash
+
+      # Build runs codegen (orval) → src/generated/, then tsup → dist/. Only the
+      # publish path needs it; `changeset version` just edits package.json and
+      # the changelog.
+      - name: Build
+        if: steps.plan.outputs.publish == 'true'
         run: pnpm build
 
       # Trusted publishing (OIDC) — no NPM_TOKEN. Needs npm >= 11.5.1; node 24's
