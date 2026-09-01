@@ -38,3 +38,28 @@ jobs:
       # Covers src, scripts, codegen.ts and openapi/ — see tsconfig.json.
       - name: Type check
         run: pnpm typecheck
+
+  # The org ruleset requires exactly one context, `ci`, across every repo (see
+  # org-require-ci in BorrowBetter/terraform-github). Repos do not agree on what
+  # they run, so they agree on the name of the job that reports — this one fans
+  # in whatever runs above, including every leg of the matrix, so jobs can be
+  # added or split without touching the ruleset.
+  #
+  # `if: always()` is load-bearing. Without it this job is SKIPPED when a
+  # dependency fails, and a skipped check does not fail a required status check
+  # — the gate would go green exactly when the build broke.
+  #
+  # The condition deliberately ignores `skipped`, which is safe only because
+  # every job in `needs` runs unconditionally. Give one of them an `if:` or a
+  # path filter and add 'skipped' here too, or an upstream skip passes the gate.
+  ci:
+    # Explicit, even though it matches the job id — this string is the org
+    # ruleset's required context, so it must not silently follow a rename.
+    name: ci
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on upstream jobs
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
