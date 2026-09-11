@@ -18,11 +18,13 @@
  * Adding a repair? Give it a `reason` a stranger can act on, and make sure
  * `applies()` would return false the moment FDR does the obvious fix.
  */
+
 import type {
 	OpenAPIObject,
 	ReferenceObject,
 	SchemaObject,
 } from "openapi3-ts/oas30";
+import { defineTransformer } from "orval";
 
 /**
  * The spec version every repair below was validated against. A mismatch throws:
@@ -176,8 +178,7 @@ const programSelectionApplicantId: Repair = {
 
 const REPAIRS: Repair[] = [selectProgramErrors, programSelectionApplicantId];
 
-/** orval `input.override.transformer` — see `codegen.ts`. */
-export const repairSpec = (spec: OpenAPIObject): OpenAPIObject => {
+const applyRepairs = (spec: OpenAPIObject): OpenAPIObject => {
 	if (spec.info?.version !== VERIFIED_AGAINST) {
 		throw new Error(
 			[
@@ -209,3 +210,19 @@ export const repairSpec = (spec: OpenAPIObject): OpenAPIObject => {
 	console.log(`🔧 spec repairs: ${REPAIRS.map((r) => r.id).join(", ")}`);
 	return repaired;
 };
+
+/**
+ * orval `input.override.transformer` — see `codegen.ts`.
+ *
+ * The casts bridge a type-only mismatch, not a conversion. Since orval v8 the
+ * transformer is declared over `OpenAPIV3_1.Document` whatever the input
+ * document is, while FDR ships OpenAPI 3.0.1 and the repairs above are written
+ * against `openapi3-ts/oas30`. orval hands us the parsed vendored JSON
+ * unchanged, so both types describe the same object at runtime — and the 3.0
+ * typing is the accurate one to work in, since keywords the repairs touch
+ * (`nullable`) are 3.0-only and absent from the 3.1 type.
+ */
+export const repairSpec = defineTransformer(
+	(spec) =>
+		applyRepairs(spec as unknown as OpenAPIObject) as unknown as typeof spec,
+);
