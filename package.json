@@ -54,7 +54,7 @@
 		"@types/node": "^22.10.5",
 		"dotenv-flow": "^4.1.0",
 		"openapi3-ts": "^4.6.1",
-		"orval": "^7.13.0",
+		"orval": "^8.29.0",
 		"tsup": "^8.0.0",
 		"tsx": "^4.21.0",
 		"typescript": "^5.7.3"
