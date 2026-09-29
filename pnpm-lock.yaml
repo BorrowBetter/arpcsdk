@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       ky:
-        specifier: ^1.7.4
-        version: 1.14.3
+        specifier: ^2.1.0
+        version: 2.1.0
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.4.4
@@ -1649,9 +1649,9 @@ packages:
   jsonschema@1.5.0:
     resolution: {integrity: sha512-K+A9hhqbn0f3pJX17Q/7H6yQfD/5OXgdrR5UE12gMXCiN9D5Xq2o5mddV2QEcX/bjla99ASsAAQUyMCCRWAEhw==}
 
-  ky@1.14.3:
-    resolution: {integrity: sha512-9zy9lkjac+TR1c2tG+mkNSVlyOpInnWdSMiue4F+kq8TwJSgv6o8jhLRg8Ho6SnZ9wOYUq/yozts9qQCfk7bIw==}
-    engines: {node: '>=18'}
+  ky@2.1.0:
+    resolution: {integrity: sha512-nIKwelw+7qVqKOlX4Eht6GXfEXlDHcdIjyLWV3s119kYt5s+70ayTnYS+0fRNmtgGRRAfqdeWQbh8YizqkS0ng==}
+    engines: {node: '>=22'}
 
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
@@ -4072,7 +4072,7 @@ snapshots:
 
   jsonschema@1.5.0: {}
 
-  ky@1.14.3: {}
+  ky@2.1.0: {}
 
   leven@3.1.0: {}
 

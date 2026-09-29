@@ -56,8 +56,9 @@ export const customInstance = async <T>(
 			// and refreshes once the cached token goes stale. The OAuth exchange
 			// itself runs on a bare ky.post (no hook), so there's no recursion.
 			beforeRequest: [
-				async (req) => {
-					req.headers.set("Authorization", `Bearer ${await resolveToken()}`);
+				async ({ request }) => {
+					const token = await resolveToken();
+					request.headers.set("Authorization", `Bearer ${token}`);
 				},
 			],
 		},
