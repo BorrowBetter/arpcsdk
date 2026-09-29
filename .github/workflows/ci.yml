@@ -12,7 +12,9 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        # 22.12 is the engines floor: the first 22.x where the CJS build can
+        # require() ky (ESM-only) without a flag.
+        node-version: ['22.12', 24]
 
     steps:
       - name: Checkout
@@ -36,6 +38,11 @@ jobs:
       # gitignored and required by the typecheck below.
       - name: Build
         run: pnpm build
+
+      - name: Load built entries
+        run: |
+          node -e 'require("./dist/index.js")'
+          node --input-type=module -e 'await import("./dist/index.mjs")'
 
       # Covers src, scripts, codegen.ts and openapi/ — see tsconfig.json.
       - name: Type check

@@ -10,7 +10,7 @@ pnpm add @borrowbetter/arpcsdk
 
 ## Requirements
 
-- Node.js >= 18
+- Node.js >= 22.12
 - FDR ARPC OAuth client credentials (provided by your FDR integration contact)
 
 ## Quick start
