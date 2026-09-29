@@ -1,5 +1,13 @@
 # @borrowbetter/arpcsdk
 
+## 0.6.0
+
+### Minor Changes
+
+- [#15](https://github.com/BorrowBetter/arpcsdk/pull/15) [`b0e363f`](https://github.com/BorrowBetter/arpcsdk/commit/b0e363f50c84b873ec684480ad531ad670aaa3aa) Thanks [@rkingon](https://github.com/rkingon)! - Upgrade ky to 2.x
+
+  **Breaking: requires Node.js >= 22.12** (was >= 18). ky 2 is ESM-only and needs Node 22; the CJS build `require()`s it, which only works unflagged from 22.12. No API changes.
+
 ## 0.5.0
 
 ### Minor Changes
