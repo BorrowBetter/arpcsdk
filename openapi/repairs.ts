@@ -135,6 +135,14 @@ const addSchemas = (
 	}
 };
 
+// Placeholder names vary across FDR's own paths (`{applicantId}` on DRA,
+// `{fdrApplicantId}` elsewhere), so an upstream copy of an added route may not
+// match ours character for character.
+const hasPath = (spec: OpenAPIObject, path: string): boolean => {
+	const shape = (p: string) => p.replace(/\{[^}]+\}/g, "{}");
+	return Object.keys(spec.paths ?? {}).some((p) => shape(p) === shape(path));
+};
+
 const jsonBody = (schemaName: string) => ({
 	"application/json": {
 		schema: { $ref: `#/components/schemas/${schemaName}` },
@@ -241,7 +249,7 @@ const agreementResend: Repair = {
 	reason: `POST ${RESEND_PATH} — re-issues a signing URL (or email) for an existing DRA envelope without voiding it — is served by the gateway but missing from the spec.`,
 	reported: "not yet — sourced from FDR's resend/void guide (2026-10-22)",
 	applies(spec) {
-		return !spec.paths?.[RESEND_PATH];
+		return !hasPath(spec, RESEND_PATH);
 	},
 	apply(spec) {
 		addSchemas(spec, {
@@ -297,9 +305,12 @@ const agreementVoid: Repair = {
 	reason: `PUT ${VOID_PATH} — cancels a DRA envelope so it can no longer be signed — is served by the gateway but missing from the spec.`,
 	reported: "not yet — sourced from FDR's resend/void guide (2026-10-22)",
 	applies(spec) {
-		return !spec.paths?.[VOID_PATH];
+		return !hasPath(spec, VOID_PATH);
 	},
 	apply(spec) {
+		// A copy with `error_details` swapped, not an allOf — an intersection would
+		// keep the readiness fields typed on an error that never carries them.
+		const base = mustSchema(spec, "ARPCErrorResponse");
 		addSchemas(spec, {
 			AgreementVoidRequest: {
 				type: "object",
@@ -333,17 +344,13 @@ const agreementVoid: Repair = {
 				description: `Error context for agreement lifecycle failures${ADDED}`,
 			},
 			AgreementErrorResponse: {
-				allOf: [
-					{ $ref: "#/components/schemas/ARPCErrorResponse" },
-					{
-						type: "object",
-						properties: {
-							error_details: {
-								$ref: "#/components/schemas/AgreementErrorDetails",
-							},
-						},
+				...base,
+				properties: {
+					...base.properties,
+					error_details: {
+						$ref: "#/components/schemas/AgreementErrorDetails",
 					},
-				],
+				},
 				description: `ARPCErrorResponse whose \`error_details\` carries the envelope rather than readiness checks. ER40501 covers both an unknown envelope and one already voided, completed or declined — terminal, don't retry.${ADDED}`,
 			},
 		});

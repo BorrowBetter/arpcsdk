@@ -460,6 +460,8 @@ async function main(
 	});
 	show(resent.status, redactUrl(resent.data));
 	if (resent.status !== 200) throw new Error("resend failed");
+	if (!resent.data.applicant?.url)
+		throw new Error("resend returned no signing URL");
 	if (resent.data.envelopeId !== envelopeId)
 		throw new Error(
 			`resend moved the envelope: ${envelopeId} → ${resent.data.envelopeId}`,
@@ -478,7 +480,8 @@ async function main(
 		applicant: { signing_type: "url" },
 	});
 	show(reissued.status, redactUrl(reissued.data));
-	if (reissued.status !== 200) throw new Error("reissue after void failed");
+	if (reissued.status !== 200 || !reissued.data.envelopeId)
+		throw new Error("reissue after void failed");
 	if (reissued.data.envelopeId === envelopeId)
 		throw new Error("reissue returned the voided envelope");
 
