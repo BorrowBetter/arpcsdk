@@ -114,6 +114,8 @@ sequenceDiagram
 - `createProgramSummaryTask()` — records the program-summary review. **This gates DRA generation** — skip it and the `dra` readiness check fails. Returns `201`, not `200`, on success.
 - `getApplicationReadiness()` — pre-flight; confirms the `uw_submission` and `dra` gates are verified.
 - `generateDra()` — returns a **DocuSign embedded signing URL** (`dra.data.applicant?.url`). Single-use, ~5 min TTL. Successful signing triggers enrollment downstream.
+- `resendAgreement()` — fresh signing URL (or email) for the **same** envelope. Reach for this when a URL expired or got lost; don't void just to get another URL.
+- `voidAgreement()` — cancels the envelope for good; only when the agreement is wrong or superseded. `generateDra()` afterwards mints a new envelope. `ER40501` = unknown or already voided/completed/declined — terminal, don't retry.
 
 ### Endpoint reference
 
@@ -131,6 +133,8 @@ sequenceDiagram
 | `createProgramSummaryTask` | `POST /v2/application/program-summary-task/{id}` — **gates DRA** |
 | `getApplicationReadiness` | `GET /v1/application/{id}/readiness` |
 | `generateDra` | `POST /v2/application/{id}/dra` (DocuSign embedded signing URL) |
+| `resendAgreement` | `POST /v2/application/{id}/agreement/{envelopeId}/resend` (not in FDR's spec — see repairs) |
+| `voidAgreement` | `PUT /v1/application/{id}/agreement/{envelopeId}/void` (not in FDR's spec — see repairs) |
 | `leadTransfer` | `POST /v1/application/lead-transfer` (retail handoff — see below) |
 
 ## Choosing a payment schedule
@@ -273,12 +277,14 @@ The spec's `Authentication` tag is excluded from codegen (`input.filters`): it d
 
 ### Spec repairs
 
-The vendored spec is byte-identical to what FDR published. Defects we've reported to them are patched at codegen time by `openapi/repairs.ts` (wired in as orval's `input.override.transformer`), so **the generated types intentionally differ from FDR's published docs** in these places:
+The vendored spec is byte-identical to what FDR published. Defects — including live endpoints the spec omits — are patched at codegen time by `openapi/repairs.ts` (wired in as orval's `input.override.transformer`), so **the generated types intentionally differ from FDR's published docs** in these places:
 
 | Repair | FDR ships | We generate |
 |---|---|---|
 | `select-program-error-responses` | `selectProgram` 401/500 → `ServerResponse`, an empty `{type: object}` | `ARPCErrorResponse`, matching every other operation; `ServerResponse` dropped |
 | `program-selection-applicant-id` | `ProgramSelectionApplicant.fdr_applicant_id` optional, so `{ applicant: {} }` type-checks and 400s at runtime | the one field the endpoint reads, marked `required` |
+| `agreement-resend` | no resend endpoint (documented only in FDR's prose guide) | `resendAgreement`; error shapes confirmed against STG, the 200 from FDR's guide |
+| `agreement-void` | no void endpoint (same guide) | `voidAgreement`, plus `AgreementErrorResponse` — its `error_details` is `{ envelope_id }`, not the readiness `ErrorDetails` |
 
 2026.16.1 fixed three of the four repairs this file carried against 16.0 — the `draft_type` response enum, the `ProgramSelectionRequest.applicant` reference, and the readiness error envelope (`ARPCErrorResponse.error_details`). Their guards fired on the version bump and the repairs were deleted, which is the mechanism working as designed. Note `ReadinessErrorResponse` is no longer exported: readiness detail now hangs off `ARPCErrorResponse.error_details` as FDR's own `ErrorDetails`.
 

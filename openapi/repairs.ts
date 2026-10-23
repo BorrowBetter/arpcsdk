@@ -2,8 +2,9 @@
  * Local repairs to FDR's published ARPC spec.
  *
  * The vendored JSON stays byte-identical to what FDR shipped, so the next drop
- * diffs cleanly. Defects we've reported to them are patched here instead, at
- * codegen time, via orval's `input.override.transformer`.
+ * diffs cleanly. Spec defects are patched here instead, at
+ * codegen time, via orval's `input.override.transformer` — including live
+ * endpoints the spec omits, whose guard is simply "the path is still absent".
  *
  * The point of this file is that repairs **expire loudly**. Every repair
  * declares `applies()` — a check that the defect is still present — and the
@@ -116,6 +117,58 @@ const repointResponse = (
 const PATCHED =
 	"\n\n⚠️ Patched locally by `openapi/repairs.ts` — this differs from FDR's published spec.";
 
+const ADDED =
+	"\n\n⚠️ Added locally by `openapi/repairs.ts` — FDR serves this, but their published spec doesn't document it.";
+
+/** Register new component schemas, refusing to clobber one FDR has since shipped. */
+const addSchemas = (
+	spec: OpenAPIObject,
+	added: Record<string, SchemaObject>,
+): void => {
+	const schemas = mustSchemas(spec);
+	for (const [name, value] of Object.entries(added)) {
+		if (schemas[name])
+			throw new Error(
+				`repair precondition failed: components.schemas.${name} already exists — FDR may have shipped it`,
+			);
+		schemas[name] = value;
+	}
+};
+
+const jsonBody = (schemaName: string) => ({
+	"application/json": {
+		schema: { $ref: `#/components/schemas/${schemaName}` },
+	},
+});
+
+const errorResponses = (overrides: Record<string, string> = {}) =>
+	Object.fromEntries(
+		["400", "401", "403", "404", "500"].map((code) => [
+			code,
+			{
+				description: `HTTP ${code}`,
+				content: jsonBody(overrides[code] ?? "ARPCErrorResponse"),
+			},
+		]),
+	);
+
+const agreementPathParams = [
+	{
+		name: "fdrApplicantId",
+		in: "path" as const,
+		description: "The unique FDR applicant ID",
+		required: true,
+		schema: { type: "string" as const },
+	},
+	{
+		name: "envelopeId",
+		in: "path" as const,
+		description: "DocuSign envelope ID, as returned by `generateDra`",
+		required: true,
+		schema: { type: "string" as const },
+	},
+];
+
 // ---------------------------------------------------------------------------
 
 const SELECT_PROGRAM_PATH = "/v1/application/program-selection";
@@ -172,9 +225,159 @@ const programSelectionApplicantId: Repair = {
 	},
 };
 
+// Resend and void are live on the gateway but absent from every published spec
+// through 2026.16.1; FDR documents them only in a prose guide. The 200 shapes
+// come from that guide; the error shapes were confirmed against STG, which
+// disagrees with the guide's example (a string `status` and an epoch
+// `timestamp`; the wire sends neither).
+
+const RESEND_PATH =
+	"/v2/application/{fdrApplicantId}/agreement/{envelopeId}/resend";
+const VOID_PATH =
+	"/v1/application/{fdrApplicantId}/agreement/{envelopeId}/void";
+
+const agreementResend: Repair = {
+	id: "agreement-resend",
+	reason: `POST ${RESEND_PATH} — re-issues a signing URL (or email) for an existing DRA envelope without voiding it — is served by the gateway but missing from the spec.`,
+	reported: "not yet — sourced from FDR's resend/void guide (2026-10-22)",
+	applies(spec) {
+		return !spec.paths?.[RESEND_PATH];
+	},
+	apply(spec) {
+		addSchemas(spec, {
+			AgreementResendApplicant: {
+				type: "object",
+				required: ["signing_type"],
+				properties: {
+					signing_type: {
+						type: "string",
+						enum: ["url", "email"],
+						description:
+							"`url` returns a fresh embedded signing URL; `email` triggers DocuSign's email flow and returns no URL.",
+					},
+				},
+				description: `Applicant resend preferences${ADDED}`,
+			},
+			AgreementResendRequest: {
+				type: "object",
+				required: ["applicant"],
+				properties: {
+					applicant: {
+						$ref: "#/components/schemas/AgreementResendApplicant",
+					},
+				},
+				description: `Request body to resend an existing DRA envelope${ADDED}`,
+			},
+		});
+		spec.paths[RESEND_PATH] = {
+			post: {
+				tags: ["Phase 4: Fulfillment and Enrollment"],
+				summary: "Resend a DRA envelope",
+				description: `Keeps the envelope active and returns a fresh embedded signing URL (\`signing_type: "url"\`) or re-sends the signing email (\`"email"\`). Use this, not void, to get another URL for a still-correct agreement. A CA envelope is preview-only while paused (Day 0) and signable after the Day-3 auto-unpause.${ADDED}`,
+				operationId: "resendAgreement",
+				parameters: agreementPathParams,
+				requestBody: {
+					required: true,
+					content: jsonBody("AgreementResendRequest"),
+				},
+				responses: {
+					"200": {
+						description: "Envelope re-issued",
+						content: jsonBody("DraResponse"),
+					},
+					...errorResponses(),
+				},
+			},
+		};
+	},
+};
+
+const agreementVoid: Repair = {
+	id: "agreement-void",
+	reason: `PUT ${VOID_PATH} — cancels a DRA envelope so it can no longer be signed — is served by the gateway but missing from the spec.`,
+	reported: "not yet — sourced from FDR's resend/void guide (2026-10-22)",
+	applies(spec) {
+		return !spec.paths?.[VOID_PATH];
+	},
+	apply(spec) {
+		addSchemas(spec, {
+			AgreementVoidRequest: {
+				type: "object",
+				required: ["voiding_reason"],
+				properties: {
+					voiding_reason: {
+						type: "string",
+						description: "Business reason for the void",
+						example: "Envelope has expired.",
+					},
+				},
+				description: `Request body to void a DRA envelope${ADDED}`,
+			},
+			AgreementVoidResponse: {
+				type: "object",
+				properties: {
+					status: { type: "string", example: "voided" },
+					envelopeId: { type: "string" },
+					statusDateTime: {
+						type: "string",
+						description:
+							"Zone-less local timestamp, e.g. `2026-09-03T19:59:37.272043773`",
+					},
+					xCorrelationId: { type: "string" },
+				},
+				description: `Void confirmation. Note the camelCase keys, unlike the rest of the API.${ADDED}`,
+			},
+			AgreementErrorDetails: {
+				type: "object",
+				properties: { envelope_id: { type: "string" } },
+				description: `Error context for agreement lifecycle failures${ADDED}`,
+			},
+			AgreementErrorResponse: {
+				allOf: [
+					{ $ref: "#/components/schemas/ARPCErrorResponse" },
+					{
+						type: "object",
+						properties: {
+							error_details: {
+								$ref: "#/components/schemas/AgreementErrorDetails",
+							},
+						},
+					},
+				],
+				description: `ARPCErrorResponse whose \`error_details\` carries the envelope rather than readiness checks. ER40501 covers both an unknown envelope and one already voided, completed or declined — terminal, don't retry.${ADDED}`,
+			},
+		});
+		spec.paths[VOID_PATH] = {
+			put: {
+				tags: ["Phase 4: Fulfillment and Enrollment"],
+				summary: "Void a DRA envelope",
+				description: `Ends the envelope so it can no longer be signed. Use only when the agreement must be cancelled or replaced — never just to get another signing URL (resend does that).${ADDED}`,
+				operationId: "voidAgreement",
+				parameters: agreementPathParams,
+				requestBody: {
+					required: true,
+					content: jsonBody("AgreementVoidRequest"),
+				},
+				responses: {
+					"200": {
+						description: "Envelope voided",
+						content: jsonBody("AgreementVoidResponse"),
+					},
+					...errorResponses({ "400": "AgreementErrorResponse" }),
+				},
+			},
+		};
+	},
+};
+
 // ---------------------------------------------------------------------------
 
-const REPAIRS: Repair[] = [selectProgramErrors, programSelectionApplicantId];
+const REPAIRS: Repair[] = [
+	selectProgramErrors,
+	programSelectionApplicantId,
+	agreementResend,
+	agreementVoid,
+];
 
 /** orval `input.override.transformer` — see `codegen.ts`. */
 export const repairSpec = (spec: OpenAPIObject): OpenAPIObject => {

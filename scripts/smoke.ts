@@ -12,7 +12,7 @@
  * Sequence: eligibility → registerV2 → program(poll) → pick schedule → lead →
  *   GET → PATCH conditions → select-program → uwV2 → select-program again →
  *   send-email(if not auto-sent) → bank → program-summary(gates DRA) →
- *   readiness → DRA.
+ *   readiness → DRA → resend → void → reissue DRA.
  */
 import "dotenv-flow/config";
 import { ArpcSDK, DRAFT_TYPE_LABEL, draftTypeOf } from "../src";
@@ -51,6 +51,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (s: string) => console.log(`\n\x1b[1m=== ${s} ===\x1b[0m`);
 const show = (status: number, data: unknown) =>
 	console.log(`status ${status}`, JSON.stringify(data, null, 2));
+
+// Signing URLs are bearer credentials for the signing session — keep them out
+// of terminal scrollback and CI logs.
+const redactUrl = <T>(data: T): T =>
+	JSON.parse(
+		JSON.stringify(data, (k, v) => (k === "url" && v ? "<redacted>" : v)),
+	);
 
 // Shared across every test user: none of these are tied to the canned Spinwheel
 // pull the way the identity fields in `test-users.ts` are.
@@ -440,17 +447,46 @@ async function main(
 		returning_url: "https://www.example.net/callback/docusign",
 		applicant: { signing_type: "url" },
 	});
-	show(dra.status, dra.data);
-
-	say("TRACE");
-	console.log(`fdr_applicant_id : ${faid}`);
-	if (dra.status === 200) {
-		console.log(`DRA envelopeId   : ${dra.data.envelopeId}`);
-		say("✅ DONE — full enrollment flow green through DRA generation");
-	} else {
+	show(dra.status, redactUrl(dra.data));
+	const envelopeId = dra.data.envelopeId;
+	if (dra.status !== 200 || !envelopeId) {
 		say("❌ INCOMPLETE — flow did not reach a DRA envelope");
 		process.exit(1);
 	}
+
+	say("11. Resend DRA (fresh signing URL, same envelope)");
+	const resent = await sdk.api.resendAgreement(faid, envelopeId, {
+		applicant: { signing_type: "url" },
+	});
+	show(resent.status, redactUrl(resent.data));
+	if (resent.status !== 200) throw new Error("resend failed");
+	if (resent.data.envelopeId !== envelopeId)
+		throw new Error(
+			`resend moved the envelope: ${envelopeId} → ${resent.data.envelopeId}`,
+		);
+
+	say("12. Void DRA");
+	const voided = await sdk.api.voidAgreement(faid, envelopeId, {
+		voiding_reason: "Smoke run: void-and-reissue check.",
+	});
+	show(voided.status, voided.data);
+	if (voided.status !== 200) throw new Error("void failed");
+
+	say("13. Reissue DRA (new envelope after void)");
+	const reissued = await sdk.api.generateDra(faid, {
+		returning_url: "https://www.example.net/callback/docusign",
+		applicant: { signing_type: "url" },
+	});
+	show(reissued.status, redactUrl(reissued.data));
+	if (reissued.status !== 200) throw new Error("reissue after void failed");
+	if (reissued.data.envelopeId === envelopeId)
+		throw new Error("reissue returned the voided envelope");
+
+	say("TRACE");
+	console.log(`fdr_applicant_id   : ${faid}`);
+	console.log(`voided envelopeId  : ${envelopeId}`);
+	console.log(`reissued envelopeId: ${reissued.data.envelopeId}`);
+	say("✅ DONE — DRA issued, resent, voided and reissued");
 }
 
 // Positional arg picks the identity: `pnpm smoke core-spinwheel`. Undefined
