@@ -1,5 +1,18 @@
 # @borrowbetter/arpcsdk
 
+## 0.8.0
+
+### Minor Changes
+
+- [#19](https://github.com/BorrowBetter/arpcsdk/pull/19) [`a70de5d`](https://github.com/BorrowBetter/arpcsdk/commit/a70de5d1760324e3e855390fa6176c031b23dbd7) Thanks [@rkingon](https://github.com/rkingon)! - Regenerate against FDR's ARPC spec 2026.21.0
+
+  - New `getApplicationStatus()` — `GET /v1/application/{id}/status`, a flat field-projected record (`?query=`).
+  - `patchLead()` accepts `draft_type` and `first_draft_date`.
+  - New fields: `EligibilityApplicant.social_security_number`, `DraRequest.credit_utilization`, `LeadDebtAccount.reference_id`, `EligibilityApplication.ineligible_reason`.
+  - **Breaking (types):** `IneligibleReason` is gone, split into `ProgramIneligibilityReason` (application-level `ineligible_reason`) and `DebtAccountIneligibilityReason` (`LeadDebtAccount.ineligible_reason`), each with a different `reason_id` vocabulary — re-check reason comparisons, not just imports. Array items such as `PaymentScheduleOption` and `LeadCondition` are no longer nullable, and `LeadApplicant` itself is non-null (`co_applicant` stays nullable).
+  - The spec moved to OpenAPI 3.1. A new `nullable-refs` repair keeps `error_details`, `bank_details`, `co_applicant`, `readiness` and `credit_pull_consent` typed `T | null`; nullable fields also now generate named aliases (e.g. `LeadApplicationBankDetails`).
+  - Dropped the `select-program-error-responses` repair: FDR fixed it upstream.
+
 ## 0.7.0
 
 ### Minor Changes
