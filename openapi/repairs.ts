@@ -30,7 +30,7 @@ import type {
  * a spec bump should force a human to re-check each patch, since a guard can
  * only detect a defect disappearing, not one whose meaning quietly changed.
  */
-const VERIFIED_AGAINST = "2026.16.1";
+const VERIFIED_AGAINST = "2026.21.0";
 
 interface Repair {
 	/** Stable id, logged on every codegen run. */
@@ -77,40 +77,6 @@ const mustSchema = (spec: OpenAPIObject, name: string): SchemaObject => {
 			`repair precondition failed: components.schemas.${name} is missing or a $ref`,
 		);
 	return found;
-};
-
-/** Does a POST operation's JSON response body point at this component schema? */
-const responseRefs = (
-	spec: OpenAPIObject,
-	path: string,
-	code: string,
-	schemaName: string,
-): boolean => {
-	const response = spec.paths?.[path]?.post?.responses?.[code];
-	const ref =
-		response && !isRef(response)
-			? response.content?.["application/json"]?.schema
-			: undefined;
-	return isRef(ref) && ref.$ref === `#/components/schemas/${schemaName}`;
-};
-
-/** Repoint a POST operation's JSON response body at a component schema. */
-const repointResponse = (
-	spec: OpenAPIObject,
-	path: string,
-	code: string,
-	schemaName: string,
-): void => {
-	const response = spec.paths?.[path]?.post?.responses?.[code];
-	const json =
-		response && !isRef(response)
-			? response.content?.["application/json"]
-			: undefined;
-	if (!json)
-		throw new Error(
-			`repair precondition failed: no JSON body on ${code} of POST ${path}`,
-		);
-	json.schema = { $ref: `#/components/schemas/${schemaName}` };
 };
 
 /** Marker appended to every patched schema so the divergence shows up in editor tooltips. */
@@ -179,33 +145,41 @@ const agreementPathParams = [
 
 // ---------------------------------------------------------------------------
 
-const SELECT_PROGRAM_PATH = "/v1/application/program-selection";
+/** Every `{ $ref, type: "null" }` object in the spec — see `nullableRefs`. */
+const nullableRefSites = (spec: OpenAPIObject): Record<string, unknown>[] => {
+	const sites: Record<string, unknown>[] = [];
+	const walk = (node: unknown): void => {
+		if (typeof node !== "object" || node === null) return;
+		const obj = node as Record<string, unknown>;
+		if (typeof obj.$ref === "string" && obj.type === "null") sites.push(obj);
+		for (const child of Object.values(obj)) walk(child);
+	};
+	walk(spec);
+	return sites;
+};
 
-const selectProgramErrors: Repair = {
-	id: "select-program-error-responses",
+const nullableRefs: Repair = {
+	id: "nullable-refs",
 	reason:
-		"selectProgram's 401 and 500 point at ServerResponse, an empty `{type: object}` schema, where every other operation in the spec uses ARPCErrorResponse. Looks unintentional, and it generates a junk model. The 2026.16.1 changelog claims this was fixed; the shipped JSON still says ServerResponse, so it wasn't.",
-	reported: "2026-08-08",
-	// Both codes are rewritten, so both have to be proven — a guard that checked
-	// only the 401 would keep firing after FDR fixed the 500 and would silently
-	// overwrite their fix.
+		'2026.21.0 moved to OpenAPI 3.1, and SpringDoc encodes a nullable reference as `{ $ref, type: "null" }`. Under 3.1 that is an intersection (the referenced object AND null — unsatisfiable), and orval drops the sibling, so e.g. `ARPCErrorResponse.error_details` and `LeadApplication.bank_details` generate as non-null. Rewritten to `anyOf: [{ $ref }, { type: "null" }]`, which generates `T | null`.',
+	reported: "not yet",
+	// A sweep, not a list of sites: any survivor still needs the rewrite, and the
+	// guard fires only once FDR emits none at all.
 	applies(spec) {
-		return ["401", "500"].every((code) =>
-			responseRefs(spec, SELECT_PROGRAM_PATH, code, "ServerResponse"),
-		);
+		return nullableRefSites(spec).length > 0;
 	},
 	apply(spec) {
-		for (const code of ["401", "500"]) {
-			repointResponse(spec, SELECT_PROGRAM_PATH, code, "ARPCErrorResponse");
+		for (const site of nullableRefSites(spec)) {
+			const { $ref, type, description, ...rest } = site;
+			if (Object.keys(rest).length > 0)
+				throw new Error(
+					`repair precondition failed: nullable $ref to ${$ref} carries unexpected keys (${Object.keys(rest).join(", ")})`,
+				);
+			delete site.$ref;
+			delete site.type;
+			site.anyOf = [{ $ref }, { type }];
+			site.description = `${description ?? ""}${PATCHED}`;
 		}
-		// Only drop the schema once nothing points at it. FDR could start using
-		// ServerResponse somewhere legitimate, and deleting a live schema would
-		// break unrelated generated types.
-		if (JSON.stringify(spec).includes("#/components/schemas/ServerResponse"))
-			throw new Error(
-				"repair precondition failed: ServerResponse is still referenced elsewhere in the spec — it is no longer dead, so this repair must not delete it",
-			);
-		delete mustSchemas(spec).ServerResponse;
 	},
 };
 
@@ -234,7 +208,7 @@ const programSelectionApplicantId: Repair = {
 };
 
 // Resend and void are live on the gateway but absent from every published spec
-// through 2026.16.1; FDR documents them only in a prose guide. The 200 shapes
+// through 2026.21.0; FDR documents them only in a prose guide. The 200 shapes
 // come from that guide; the error shapes were confirmed against STG, which
 // disagrees with the guide's example (a string `status` and an epoch
 // `timestamp`; the wire sends neither).
@@ -380,7 +354,7 @@ const agreementVoid: Repair = {
 // ---------------------------------------------------------------------------
 
 const REPAIRS: Repair[] = [
-	selectProgramErrors,
+	nullableRefs,
 	programSelectionApplicantId,
 	agreementResend,
 	agreementVoid,

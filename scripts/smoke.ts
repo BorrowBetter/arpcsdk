@@ -12,7 +12,7 @@
  * Sequence: eligibility → registerV2 → program(poll) → pick schedule → lead →
  *   GET → PATCH conditions → select-program → uwV2 → select-program again →
  *   send-email(if not auto-sent) → bank → program-summary(gates DRA) →
- *   readiness → DRA → resend → void → reissue DRA.
+ *   readiness → DRA → resend → void → reissue DRA → status.
  */
 import "dotenv-flow/config";
 import { ArpcSDK, DRAFT_TYPE_LABEL, draftTypeOf } from "../src";
@@ -484,6 +484,14 @@ async function main(
 		throw new Error("reissue after void failed");
 	if (reissued.data.envelopeId === envelopeId)
 		throw new Error("reissue returned the voided envelope");
+
+	say("14. Application status (field projection)");
+	const st = await sdk.api.getApplicationStatus(faid, {
+		query: "id,fdr_applicant_id,sub_status",
+	});
+	show(st.status, st.data);
+	if (st.status !== 200 || st.data.fdr_applicant_id !== faid)
+		throw new Error("application status lookup failed");
 
 	say("TRACE");
 	console.log(`fdr_applicant_id   : ${faid}`);
