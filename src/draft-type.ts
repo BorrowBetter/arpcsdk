@@ -18,9 +18,8 @@ import type {
  * The two *vocabularies* remain — a corrected enum is not a unified one.
  *
  * Scope is narrow: `LeadApplication.draft_type` is the only label-valued site
- * in the whole spec. `PaymentSchedule` and `ProgramSelectionRequest` are both
- * already lowercase, and `LeadPatchRequest` has no `draft_type` at all, so
- * `selectProgram` is the only write path.
+ * in the whole spec. Every write path — `selectProgram`, and `patchLead` since
+ * 2026.21.0 — takes the lowercase code, as does `PaymentSchedule`.
  *
  * These maps are annotated as `Record<>` over the generated enums on purpose:
  * if FDR ever adds a fourth draft type, codegen widens the enum and these fail
