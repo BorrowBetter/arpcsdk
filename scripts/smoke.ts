@@ -249,7 +249,7 @@ async function main(
 		});
 	}
 	if (prog.status !== 200) throw new Error("program not ready after polling");
-	// `data` is typed 200 | 202 body; the status check above is what narrows it.
+	// `data` is typed 200 | 202 body; the 200 check above makes this assertion safe.
 	const papp = (prog.data as LeadResponse).application;
 	const cbr = papp?.cbr_report_id ?? undefined;
 	const referenceId = papp?.reference_id ?? faid;

@@ -10,8 +10,8 @@ import { repairSpec } from "./openapi/repairs";
  * All calls route through the custom ky mutator in `src/http/client.ts`, which
  * sets the gateway base URL and injects the bearer token.
  *
- * The generated types intentionally diverge from FDR's published spec in a few
- * places — see `openapi/repairs.ts` for the list and the reasoning.
+ * Where FDR's spec has a defect, `openapi/repairs.ts` patches it at codegen
+ * time, so the generated types can intentionally diverge from the published spec.
  *
  * Usage:
  *   pnpm codegen   # regenerate the client

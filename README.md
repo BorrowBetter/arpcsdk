@@ -99,7 +99,7 @@ sequenceDiagram
 - `registerApplicantV2()` — writes applicant PII and **kicks off an async credit pull**, which is why Phase 2 polls. As of spec 2026.16.0 it also returns `fdr_applicant_id` (generated server-side when the request omits it), so registration-first is now viable if you don't need the quote.
 
 **Phase 2 — program (poll it yourself)**
-- `generateProgramV1()` returns `202` + a `Retry-After` while the credit pull runs, then `200` with the program. **Loop until 200**, honoring `Retry-After` (usually ~12s, occasionally 20s+). Since 2026.22.0 the 202 body is typed `ProgramPendingResponse` (`status`: `NETWORK_USER_PENDING` / `CREDIT_PENDING` / `PROGRAM_GENERATE_PENDING`), so `data` is `LeadResponse | ProgramPendingResponse` — narrow on `status` before reading `application`. See `scripts/smoke.ts` for the reference loop.
+- `generateProgramV1()` returns `202` + a `Retry-After` while the credit pull runs, then `200` with the program. **Loop until 200**, honoring `Retry-After` (usually ~12s, occasionally 20s+). Since 2026.22.0 the 202 body is typed `ProgramPendingResponse` (`status`: `NETWORK_USER_PENDING` / `CREDIT_PENDING` / `PROGRAM_GENERATE_PENDING`), so `data` is `LeadResponse | ProgramPendingResponse`. Checking `status` doesn't narrow it for TypeScript (`HttpResponse` isn't a discriminated union): after confirming `200`, assert `data as LeadResponse` before reading `application`. See `scripts/smoke.ts` for the reference loop.
 
 **Phase 3 — lead & underwriting**
 - `createLeadSync()` — promotes to a real lead. Data authority shifts to FDR/Salesforce here.
