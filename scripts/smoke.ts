@@ -21,9 +21,11 @@ import type {
 	LeadApplication,
 	LeadCondition,
 	LeadPatchRequest,
+	LeadResponse,
 	PatchCondition,
 	PaymentSchedule,
 	PaymentScheduleOption,
+	ProgramPendingResponse,
 } from "../src/generated/model";
 import { newSsn, resolveTestUser } from "./test-users";
 
@@ -233,8 +235,12 @@ async function main(
 	});
 	for (let attempt = 1; attempt <= 40 && prog.status !== 200; attempt++) {
 		const retryAfter = prog.headers.get("retry-after");
+		const pending =
+			prog.status === 202
+				? ` ${(prog.data as ProgramPendingResponse).status}`
+				: "";
 		console.log(
-			`  attempt ${attempt}: ${prog.status}${retryAfter ? ` (retry-after ${retryAfter}s)` : ""}`,
+			`  attempt ${attempt}: ${prog.status}${pending}${retryAfter ? ` (retry-after ${retryAfter}s)` : ""}`,
 		);
 		await sleep((retryAfter ? Number(retryAfter) : 3) * 1000);
 		prog = await sdk.api.generateProgramV1({
@@ -243,7 +249,8 @@ async function main(
 		});
 	}
 	if (prog.status !== 200) throw new Error("program not ready after polling");
-	const papp = prog.data.application;
+	// `data` is typed 200 | 202 body; the 200 check above makes this assertion safe.
+	const papp = (prog.data as LeadResponse).application;
 	const cbr = papp?.cbr_report_id ?? undefined;
 	const referenceId = papp?.reference_id ?? faid;
 	const progDebtAccounts = papp?.debt_accounts ?? [];
@@ -455,7 +462,7 @@ async function main(
 	}
 
 	say("11. Resend DRA (fresh signing URL, same envelope)");
-	const resent = await sdk.api.resendAgreement(faid, envelopeId, {
+	const resent = await sdk.api.resendAgreementV2(faid, envelopeId, {
 		applicant: { signing_type: "url" },
 	});
 	show(resent.status, redactUrl(resent.data));

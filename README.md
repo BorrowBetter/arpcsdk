@@ -95,11 +95,11 @@ sequenceDiagram
 **Auth** — handled for you. The SDK authenticates on the first `api` call, caches the token, and refreshes it automatically. See [Token caching](#token-caching) to control where the token lives.
 
 **Phase 1 — identity**
-- `checkEligibility()` — stateless quote (no PII). Its critical job: it **mints `fdr_applicant_id`**, which the rest of the flow threads through.
+- `checkEligibility()` — stateless quote (no PII). Its critical job: it **mints `fdr_applicant_id`**, which the rest of the flow threads through. Since 2026.22.0 each debt account takes optional `last_payment_date` and `balance_date` (`YYYY-MM-DD`) and a `responsibility` label. Send the real dates when you have them: omitted dates default to today, which shifts the settlement math (NPV) and can change eligibility.
 - `registerApplicantV2()` — writes applicant PII and **kicks off an async credit pull**, which is why Phase 2 polls. As of spec 2026.16.0 it also returns `fdr_applicant_id` (generated server-side when the request omits it), so registration-first is now viable if you don't need the quote.
 
 **Phase 2 — program (poll it yourself)**
-- `generateProgramV1()` returns `202` + a `Retry-After` while the credit pull runs, then `200` with the program. **Loop until 200**, honoring `Retry-After` (usually ~12s, occasionally 20s+). See `scripts/smoke.ts` for the reference loop.
+- `generateProgramV1()` returns `202` + a `Retry-After` while the credit pull runs, then `200` with the program. **Loop until 200**, honoring `Retry-After` (usually ~12s, occasionally 20s+). Since 2026.22.0 the 202 body is typed `ProgramPendingResponse` (`status`: `NETWORK_USER_PENDING` / `CREDIT_PENDING` / `PROGRAM_GENERATE_PENDING`), so `data` is `LeadResponse | ProgramPendingResponse`. Checking `status` doesn't narrow it for TypeScript (`HttpResponse` isn't a discriminated union): after confirming `200`, assert `data as LeadResponse` before reading `application`. See `scripts/smoke.ts` for the reference loop.
 
 **Phase 3 — lead & underwriting**
 - `createLeadSync()` — promotes to a real lead. Data authority shifts to FDR/Salesforce here.
@@ -114,8 +114,8 @@ sequenceDiagram
 - `createProgramSummaryTask()` — records the program-summary review. **This gates DRA generation** — skip it and the `dra` readiness check fails. Returns `201`, not `200`, on success.
 - `getApplicationReadiness()` — pre-flight; confirms the `uw_submission` and `dra` gates are verified.
 - `generateDra()` — returns a **DocuSign embedded signing URL** (`dra.data.applicant?.url`). Single-use, ~5 min TTL. Successful signing triggers enrollment downstream.
-- `resendAgreement()` — fresh signing URL (or email) for the **same** envelope. Reach for this when a URL expired or got lost; don't void just to get another URL.
-- `voidAgreement()` — cancels the envelope for good; only when the agreement is wrong or superseded. `generateDra()` afterwards mints a new envelope. `ER40501` = unknown or already voided/completed/declined — terminal, don't retry.
+- `resendAgreementV2()` — fresh signing URL (or email) for the **same** envelope. Reach for this when a URL expired or got lost; don't void just to get another URL. A CA envelope still paused (before the Day-3 auto-unpause) is rejected with `ER40501`; `ER40504` = unknown applicant or envelope.
+- `voidAgreement()` — cancels the envelope for good; only when the agreement is wrong or superseded. `generateDra()` afterwards mints a new envelope. `ER40501` = unknown or already voided/completed/declined — terminal, don't retry. On success the lead drops back to waiting-for-agreement with sub-status `Agreement Voided`.
 
 ### Endpoint reference
 
@@ -126,7 +126,7 @@ sequenceDiagram
 | `generateProgramV1` | `POST /v1/application/program` (202 → … → 200 poll) |
 | `createLeadSync` | `POST /v3/application` |
 | `readLead` / `patchLead` | `GET` / `PATCH /v1/application/{id}` |
-| `getApplicationStatus` | `GET /v1/application/{id}/status` (flat record; `?query=` picks fields, so the response is untyped) |
+| `getApplicationStatus` | `GET /v1/application/{id}/status` (flat record; `?query=` picks fields — typed as `ApplicationStatusResponse` with an index signature for fields beyond the defaults) |
 | `selectProgram` | `POST /v1/application/program-selection` (commit to a payment schedule) |
 | `uwSubmissionV2` | `POST /v2/application/uw-submission/{id}` |
 | `sendEmail` | `POST /v1/application/send-email/{id}` (only if UW didn't auto-send) |
@@ -134,8 +134,8 @@ sequenceDiagram
 | `createProgramSummaryTask` | `POST /v2/application/program-summary-task/{id}` — **gates DRA** |
 | `getApplicationReadiness` | `GET /v1/application/{id}/readiness` |
 | `generateDra` | `POST /v2/application/{id}/dra` (DocuSign embedded signing URL) |
-| `resendAgreement` | `POST /v2/application/{id}/agreement/{envelopeId}/resend` (not in FDR's spec — see repairs) |
-| `voidAgreement` | `PUT /v1/application/{id}/agreement/{envelopeId}/void` (not in FDR's spec — see repairs) |
+| `resendAgreementV2` | `POST /v2/application/{id}/agreement/{envelopeId}/resend` |
+| `voidAgreement` | `PUT /v1/application/{id}/agreement/{envelopeId}/void` |
 | `leadTransfer` | `POST /v1/application/lead-transfer` (retail handoff — see below) |
 
 ## Choosing a payment schedule
@@ -178,7 +178,7 @@ Two things to know:
 - **`ER40301` at UW is often transient** — the readiness check hasn't caught up with the condition-verify you just did (live eventual consistency). Retry the UW submission after a short delay before treating it as terminal.
 - **`ER40303` at DRA = the `dra` readiness gate rejected.** Read `error_details[]` for the specific field. The draft/program dates it checks are backend-derived, populated by `selectProgram()` and `createProgramSummaryTask()` upstream rather than by the DRA call itself. `first_draft_date` defaults to the applicant's `next_pay_date` at UW; since 2026.21.0 you can `patchLead()` it after UW approval to pick another date. **`split` needs one extra call.** It fails the `secondDraftDateMissing` check ("Second draft date is required when draft type is split or bi-weekly") unless you `patchLead()` a `second_draft_date_split` **after UW submission and before generating the DRA** — added in 2026.16.1 in response to our report. Bi-weekly needs nothing: `second_draft_date_bi_weekly` is populated automatically at UW approval, and there is no patch field for it. `bi-weekly` and `regular` are what the smoke run exercises end-to-end; the `split` patch is documented but not yet driven by it.
 - **Hardship and goal fields are UW-required despite being spec-optional.** `CreateLeadRequest` marks nothing required, and lead creation happily returns `200` without them — then UW fails with `ER40301` / `HARDSHIP_CHECK_FAILED`. Empirically the gate needs **all three** of `hardship_category`, `hardship_category_other` and `goal_category`; `goal_category_other` is genuinely optional. Note `hardship_category_other` is required even when the category isn't `Other`, contradicting its own description — reported to FDR. Also don't trust the `field` on that error: it has been observed naming a field that *was* supplied.
-- **Readiness gates return the breakdown on `error_details`.** Since 2026.16.1 `ARPCErrorResponse.error_details` is a typed `ErrorDetails` (`checks[]`, `is_program_refresh_required`, `is_uw_approved`, `message`), so `ER40301` at UW and `ER40303`/`ER40305` at DRA are readable without a cast. 2026.21.0 documents the UW `ER40301` under both `400` and `422`; STG still returns **`400`** (observed 2026-10-30), so branch on `error_code` rather than status.
+- **Readiness gates return the breakdown on `error_details`.** Since 2026.22.0 `ARPCErrorResponse.error_details` is an `ARPCErrorDetails` — FDR's union of the readiness `ErrorDetails` (`checks[]`, `is_program_refresh_required`, `is_uw_approved`, `message`) and the agreement `AgreementErrorDetails` (`envelope_id`), so `ER40301` at UW and `ER40303`/`ER40305` at DRA are readable without a cast. 2026.21.0 documents the UW `ER40301` under both `400` and `422`; STG still returns **`400`** (observed 2026-10-30), so branch on `error_code` rather than status.
 - **Read per-check failures off `error_details[]`, not `errors[]`.** Each `ReadinessCheck` now carries structured entries with a stable `reason_code` (`REQUIRED`, `DUPLICATE_EMAIL`, `CONDITION_NOT_VERIFIED`, `DEBT_TOTAL_MISMATCH`, …) and a dotted `field` path. `errors[]` is free text kept for compat — its wording changes.
 - **Conditional vs full approval changes the email path** — always check `banking_disclosure_email_sent` before deciding whether to call `sendEmail()`.
 - **Program timing varies** — the poll can take 20s+; don't set a tight timeout around the loop.
@@ -272,24 +272,19 @@ ARPC_OAUTH_PASSWORD=...
 
 These are the smoke script's, not the SDK's — the library never reads `process.env`. The script pins `environment: "stg"` in code rather than taking it from `.env`: it drives a real enrollment against the canned STG test identity, so it must not be pointable at PRD.
 
-The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.21.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
+The typed client (`src/generated/`) is generated from the committed spec (`openapi/api-v2026.22.0.json`) and is not checked in — `pnpm codegen` (run automatically by `build`) reproduces it. To move to a newer spec, drop the JSON in `openapi/` and update `input.target` in `codegen.ts`.
 
 The spec's `Authentication` tag is excluded from codegen (`input.filters`): it documents `POST /v1/token`, which lives on the OAuth host with HTTP Basic and a form-encoded body, while every generated operation runs through the ky mutator and targets the gateway. `src/auth.ts` owns that exchange.
 
 ### Spec repairs
 
-The vendored spec is byte-identical to what FDR published. Defects — including live endpoints the spec omits — are patched at codegen time by `openapi/repairs.ts` (wired in as orval's `input.override.transformer`), so **the generated types intentionally differ from FDR's published docs** in these places:
+The vendored spec is byte-identical to what FDR published. Defects — including live endpoints the spec omits — are patched at codegen time by `openapi/repairs.ts` (wired in as orval's `input.override.transformer`), so where a repair is active **the generated types intentionally differ from FDR's published docs**.
 
-| Repair | FDR ships | We generate |
-|---|---|---|
-| `nullable-refs` | OpenAPI 3.1 `{ $ref, type: "null" }` on 5 properties (`error_details`, `bank_details`, `co_applicant`, `readiness`, `credit_pull_consent`) — orval drops the null | `anyOf: [{ $ref }, { type: "null" }]`, so they generate as `T \| null` |
-| `program-selection-applicant-id` | `ProgramSelectionApplicant.fdr_applicant_id` optional, so `{ applicant: {} }` type-checks and 400s at runtime | the one field the endpoint reads, marked `required` |
-| `agreement-resend` | no resend endpoint (documented only in FDR's prose guide) | `resendAgreement`; error shapes confirmed against STG, the 200 from FDR's guide |
-| `agreement-void` | no void endpoint (same guide) | `voidAgreement`, plus `AgreementErrorResponse` — its `error_details` is `{ envelope_id }`, not the readiness `ErrorDetails` |
+**As of 2026.22.0 there are none.** 22.0 fixed all four repairs carried against 21.0: `nullable-refs` (SpringDoc now emits `anyOf` for nullable references), `program-selection-applicant-id` (`ProgramSelectionApplicant.fdr_applicant_id` is now `required`), and `agreement-resend` / `agreement-void` (FDR now documents both endpoints). Resend ships as `resendAgreementV2` returning `ResendAgreementV2Response`; the request, response and error types we synthesised (`AgreementResendRequest`, `AgreementVoidRequest`/`Response`, `AgreementErrorResponse`) give way to FDR's own.
 
-2026.16.1 fixed three of the four repairs this file carried against 16.0 — the `draft_type` response enum, the `ProgramSelectionRequest.applicant` reference, and the readiness error envelope (`ARPCErrorResponse.error_details`). Their guards fired on the version bump and the repairs were deleted, which is the mechanism working as designed. Note `ReadinessErrorResponse` is no longer exported: readiness detail now hangs off `ARPCErrorResponse.error_details` as FDR's own `ErrorDetails`. 2026.21.0 fixed `select-program-error-responses` (`selectProgram` 401/500 now point at `ARPCErrorResponse`), and its move to OpenAPI 3.1 introduced `nullable-refs`.
+History: 2026.16.1 fixed three of the four repairs carried against 16.0 — the `draft_type` response enum, the `ProgramSelectionRequest.applicant` reference, and the readiness error envelope. 2026.21.0 fixed `select-program-error-responses`, and its move to OpenAPI 3.1 introduced `nullable-refs`.
 
-Each patched schema carries a `⚠️ Patched locally` note in its TSDoc, so the divergence is visible at the point of use.
+A patched schema carries a `⚠️ Patched locally` note in its TSDoc, so the divergence is visible at the point of use.
 
 **Repairs are designed to expire loudly.** Every one asserts the defect is still present before patching, and `pnpm codegen` fails with an actionable message if it isn't — so a fix on FDR's side breaks the build instead of leaving a dead patch behind. There's also a version gate: bumping the spec throws until each repair has been re-validated and `VERIFIED_AGAINST` is updated. That speed bump is deliberate; don't downgrade it to a warning.
 

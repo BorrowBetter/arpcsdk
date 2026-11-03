@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ARPC — Achieve Resolution Partner Connect API",
-    "description": "FDR Wholesale API — A Hybrid Integration Model designed to maximise partner velocity without compromising enterprise data standards. DEX (Digital Enrollment Experience) is the partner-facing integration layer that powers the full applicant lifecycle. The `fdr_applicant_id` acts as the applicant's passport across all systems, persisted from first eligibility check through enrollment. Documentation snapshot: 2026-10-30. All endpoints require a valid Bearer JWT with the `arpc.all` role.\n\n**Published:** 2026-10-30",
+    "description": "FDR Wholesale API — A Hybrid Integration Model designed to maximise partner velocity without compromising enterprise data standards. DEX (Digital Enrollment Experience) is the partner-facing integration layer that powers the full applicant lifecycle. The `fdr_applicant_id` acts as the applicant's passport across all systems, persisted from first eligibility check through enrollment. Documentation snapshot: 2026-11-02. All endpoints require a valid Bearer JWT with the `arpc.all` role.\n\n**Published:** 2026-11-02",
     "contact": {
       "name": "Wholesale Partner Support",
       "email": "wp@achieve.com"
@@ -10,7 +10,7 @@
     "license": {
       "name": "Proprietary"
     },
-    "version": "2026.21.0"
+    "version": "2026.22.0"
   },
   "servers": [
     {
@@ -50,6 +50,406 @@
     }
   ],
   "paths": {
+    "/v2/application/{applicantId}/agreement/{envelopeId}/resend": {
+      "post": {
+        "tags": [
+          "Phase 4: Fulfillment and Enrollment"
+        ],
+        "summary": "Resend CA agreement envelope and refresh embedded signing URL",
+        "description": "Resends a CA agreement envelope after seller authentication and authorization and returns a fresh embedded signing URL after Day-3 auto-unpause. Paused envelopes cannot be resent and return HTTP 400 / ER40501 rather than a preview URL. Wait until the envelope is unpaused before requesting a fresh signing URL. Requires a valid Authorization header.",
+        "operationId": "resendAgreementV2",
+        "parameters": [
+          {
+            "name": "applicantId",
+            "in": "path",
+            "description": "The unique FDR applicant ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "APP-12345678"
+            }
+          },
+          {
+            "name": "envelopeId",
+            "in": "path",
+            "description": "The DocuSign envelope ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "91a9221f-b944-82b1-816d-ab894b5e1d28"
+            }
+          },
+          {
+            "name": "x-correlation-id",
+            "in": "header",
+            "description": "Caller-supplied correlation ID for distributed tracing",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendAgreementV2Request"
+              },
+              "examples": {
+                "EmbeddedUrl": {
+                  "description": "EmbeddedUrl",
+                  "value": {
+                    "applicant": {
+                      "signing_type": "url"
+                    }
+                  }
+                },
+                "EmailSigning": {
+                  "description": "EmailSigning",
+                  "value": {
+                    "applicant": {
+                      "signing_type": "email"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Agreement resent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResendAgreementV2Response"
+                },
+                "examples": {
+                  "UrlSigningSuccess": {
+                    "summary": "Embedded URL returned for signing_type=url",
+                    "description": "UrlSigningSuccess",
+                    "value": {
+                      "applicant": {
+                        "url": "https://demo.docusign.net/Signing/MTRedeem/v1/9cf515f1-632a-44eb-98c9-962b294aec38?slt=..."
+                      },
+                      "envelopeId": "91a9221f-b944-82b1-816d-ab894b5e1d28",
+                      "xCorrelationId": "example-correlation-id"
+                    }
+                  },
+                  "EmailSigningSuccess": {
+                    "summary": "Email resend; no embedded URL is promised",
+                    "description": "EmailSigningSuccess",
+                    "value": {
+                      "envelopeId": "11111111-2222-4333-8444-555555555555",
+                      "xCorrelationId": "example-correlation-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or missing signing_type, applicant/envelope not found (ER40504), or envelope paused (ER40501).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "InvalidSigningType": {
+                    "description": "InvalidSigningType",
+                    "value": {
+                      "status": 400,
+                      "error": "Bad Request",
+                      "message": "signing_type must be one of: url, email",
+                      "timestamp": "2026-11-02T18:08:23Z"
+                    }
+                  },
+                  "MissingSigningType": {
+                    "description": "MissingSigningType",
+                    "value": {
+                      "status": 400,
+                      "error": "Bad Request",
+                      "message": "signing_type is required"
+                    }
+                  },
+                  "PausedEnvelope": {
+                    "summary": "Paused envelope cannot be resent",
+                    "description": "PausedEnvelope",
+                    "value": {
+                      "status": 400,
+                      "error_code": "ER40501",
+                      "error": "An error occurred processing the request"
+                    }
+                  },
+                  "ApplicantOrEnvelopeNotFound": {
+                    "description": "ApplicantOrEnvelopeNotFound",
+                    "value": {
+                      "status": 400,
+                      "timestamp": "2026-11-02T19:34:33.784Z",
+                      "x_correlation_id": "resend-not-found-check-20261102",
+                      "error_code": "ER40504",
+                      "error": "An error occurred processing the request"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "description": "InvalidToken",
+                    "value": {
+                      "status": "401",
+                      "error": "Invalid Token or No Token included",
+                      "error_code": "ER40101",
+                      "x_correlation_id": "resend-not-found-check-20261102",
+                      "timestamp": "2026-11-02 19:33:20.859"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The access token does not have the required arpc.all role to resend agreements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "MissingRequiredRole": {
+                    "description": "MissingRequiredRole",
+                    "value": {
+                      "status": 403,
+                      "error": "Forbidden",
+                      "message": "Unauthorized operation: missing required role",
+                      "timestamp": "2026-11-02T18:08:23Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "InternalServerError": {
+                    "description": "InternalServerError",
+                    "value": {
+                      "status": 500,
+                      "error": "Internal Server Error",
+                      "message": "Internal server error",
+                      "timestamp": "2026-11-02T18:08:23Z"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/application/{applicantId}/agreement/{envelopeId}/void": {
+      "put": {
+        "tags": [
+          "Phase 4: Fulfillment and Enrollment"
+        ],
+        "summary": "Void agreement envelope",
+        "description": "Voids a DRA agreement envelope and restores the lead to waiting-for-agreement status with sub-status Agreement Voided after a successful void. The supplied voiding_reason is recorded on the lead. Requires a valid Authorization header.",
+        "operationId": "voidAgreement",
+        "parameters": [
+          {
+            "name": "applicantId",
+            "in": "path",
+            "description": "The unique FDR applicant ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "envelopeId",
+            "in": "path",
+            "description": "The DocuSign envelope ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-correlation-id",
+            "in": "header",
+            "description": "Optional caller-supplied correlation ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoidAgreementRequest"
+              },
+              "examples": {
+                "VoidDra": {
+                  "description": "VoidDra",
+                  "value": {
+                    "voiding_reason": "Applicant requested a revised agreement"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Agreement voided and lead updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoidAgreementResponse"
+                },
+                "examples": {
+                  "Voided": {
+                    "description": "Voided",
+                    "value": {
+                      "status": "voided",
+                      "envelopeId": "11111111-2222-4333-8444-555555555555",
+                      "statusDateTime": "2026-11-02T18:08:23.269092",
+                      "xCorrelationId": "example-correlation-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing voiding reason, applicant or envelope not found, or agreement cannot be voided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "MissingVoidingReason": {
+                    "description": "MissingVoidingReason",
+                    "value": {
+                      "status": 400,
+                      "error_code": "ER40001",
+                      "error": "voiding_reason is required",
+                      "timestamp": "2026-11-02T18:08:23Z"
+                    }
+                  },
+                  "AgreementCannotBeVoided": {
+                    "description": "Example response when the agreement cannot be voided",
+                    "value": {
+                      "status": 400,
+                      "error_code": "ER40501",
+                      "error": "Envelope cannot be voided",
+                      "error_details": {
+                        "envelope_id": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "timestamp": "2026-11-02T18:08:23Z",
+                      "x_correlation_id": "example-correlation-id"
+                    }
+                  },
+                  "ApplicantOrEnvelopeNotFound": {
+                    "description": "Applicant or envelope not found",
+                    "value": {
+                      "status": 400,
+                      "error_code": "ER40501",
+                      "error": "Unexpected error:Envelope Not Found"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "Unauthorized": {
+                    "description": "Unauthorized",
+                    "value": {
+                      "status": "401",
+                      "error": "Invalid Token or No Token included",
+                      "error_code": "ER40101",
+                      "x_correlation_id": "example-correlation-id",
+                      "timestamp": "2026-11-02 19:33:20.859"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The access token does not have the required arpc.all role to void agreements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "MissingRequiredRole": {
+                    "description": "MissingRequiredRole",
+                    "value": {
+                      "status": 403,
+                      "error_code": "ER40301",
+                      "error": "Unauthorized operation: missing required role",
+                      "timestamp": "2026-11-02T18:08:23Z",
+                      "x_correlation_id": "example-correlation-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ARPCErrorResponse"
+                },
+                "examples": {
+                  "InternalError": {
+                    "description": "InternalError",
+                    "value": {
+                      "status": 500,
+                      "error_code": "ER50000",
+                      "error": "An error occurred processing the request",
+                      "timestamp": "2026-08-10T12:34:56Z",
+                      "x_correlation_id": "123e4567-e89b-12d3-a456-426614174000"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v2/application/{applicantId}/dra": {
       "post": {
         "tags": [
@@ -1753,7 +2153,7 @@
           "Phase 3: Enterprise Lead Promotion"
         ],
         "summary": "Get application status (field-selective)",
-        "description": "Gateway-facing alias for GET /v2/application/{fdrApplicantId}. Returns a flat record for the given FDR applicant ID. The optional ?query= parameter selects specific fields; omitting it returns the default projection.",
+        "description": "Returns a flat application record for the given FDR applicant ID. The optional ?query= parameter selects specific fields; omitting it returns the default projection.",
         "operationId": "getApplicationStatus",
         "parameters": [
           {
@@ -1782,13 +2182,31 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "description": "Field-projected flat record; shape depends on the ?query= parameter"
+                  "$ref": "#/components/schemas/ApplicationStatusResponse"
                 },
                 "examples": {
+                  "default_application_status": {
+                    "summary": "Default application status fields",
+                    "description": "default_application_status",
+                    "value": {
+                      "id": "00600XEXAMPLE",
+                      "fdr_applicant_id": "APP-12345678",
+                      "sub_status": "UW Approved",
+                      "stage_name": "Waiting for Agreement"
+                    }
+                  },
+                  "default_lead_status": {
+                    "summary": "Default status fields for an unpromoted lead",
+                    "description": "default_lead_status",
+                    "value": {
+                      "id": "00Q00XEXAMPLE",
+                      "fdr_applicant_id": "APP-12345678",
+                      "sub_status": "New",
+                      "status": "Contacted"
+                    }
+                  },
                   "application_status": {
-                    "summary": "Projected application record",
+                    "summary": "Selected fields: query=id,fdr_applicant_id,sub_status,first_name,last_name",
                     "description": "application_status",
                     "value": {
                       "id": "00600XEXAMPLE",
@@ -2130,7 +2548,7 @@
           "Phase 2: Program Generation"
         ],
         "summary": "Generate application program (v1)",
-        "description": "Async Polling Loop: Call this single endpoint for both initial generation and refresh. Returns 202 Accepted with a Retry-After header while credit is still pending. Once ready, the Managed Package orchestrates the calculation and persists the program result. Requires a valid Authorization header.",
+        "description": "Async Polling Loop: Call this single endpoint for both initial generation and refresh. Returns 202 Accepted with a Retry-After header while credit is still pending. Once processing is complete, returns the program result. Requires a valid Authorization header.",
         "operationId": "generateProgramV1",
         "requestBody": {
           "content": {
@@ -2239,6 +2657,55 @@
               }
             }
           },
+          "202": {
+            "description": "Processing is pending. Retry the same request after the delay specified by Retry-After; this is not a completed eligibility result.",
+            "headers": {
+              "Retry-After": {
+                "description": "Delay in seconds before retrying. Use the returned value. Defaults to 30 for PROGRAM_GENERATE_PENDING and 5 for other pending states.",
+                "style": "simple",
+                "schema": {
+                  "type": "integer",
+                  "example": 5
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramPendingResponse"
+                },
+                "examples": {
+                  "NetworkUserPending": {
+                    "summary": "Network user pending; default Retry-After: 5 seconds",
+                    "description": "NetworkUserPending",
+                    "value": {
+                      "isSuccess": true,
+                      "status": "NETWORK_USER_PENDING",
+                      "message": "Network user creation in progress"
+                    }
+                  },
+                  "CreditPending": {
+                    "summary": "Credit report pending; default Retry-After: 5 seconds",
+                    "description": "CreditPending",
+                    "value": {
+                      "isSuccess": true,
+                      "status": "CREDIT_PENDING",
+                      "message": "Network user created, credit report not yet ready"
+                    }
+                  },
+                  "ProgramGeneratePending": {
+                    "summary": "Program processing pending; default Retry-After: 30 seconds",
+                    "description": "ProgramGeneratePending",
+                    "value": {
+                      "isSuccess": true,
+                      "status": "PROGRAM_GENERATE_PENDING",
+                      "message": "Program processing is pending"
+                    }
+                  }
+                }
+              }
+            }
+          },
           "400": {
             "description": "Validation failure — missing or invalid fdr_applicant_id. ER40001 = one or more fields failed validation. Note: 'isSuccess' is a legacy field preserved for backward compatibility with existing consumers; do not rely on it in new integrations — use 'errors[].reason_code' instead.",
             "content": {
@@ -2327,7 +2794,7 @@
           "Phase 1: Quoting and Identity Anchoring"
         ],
         "summary": "Check application eligibility",
-        "description": "Eligibility Scout: A stateless, real-time quote. When pull_credit_report is false, provide state and debt accounts; applicant PII is not required. When pull_credit_report is true, provide applicant PII and credit-pull consent. Returns estimated program options to anchor the conversation before any registration occurs. Requires a valid Authorization header.",
+        "description": "Eligibility Scout: A stateless, real-time quote. When pull_credit_report is false, provide state and debt accounts; applicant PII is not required. Optional last_payment_date and balance_date use YYYY-MM-DD; supply actual dates when known, since omitted dates default to the current date downstream. Optional responsibility uses normalized enum labels, not bureau ECOA codes. When pull_credit_report is true, provide applicant PII and credit-pull consent. Returns estimated program options to anchor the conversation before any registration occurs. Requires a valid Authorization header.",
         "operationId": "checkEligibility",
         "requestBody": {
           "content": {
@@ -2352,6 +2819,9 @@
                         "reference_id": "example-debt-1",
                         "account_number": "1111",
                         "open_date": "2021-05-14",
+                        "last_payment_date": "2026-10-01",
+                        "balance_date": "2026-10-07",
+                        "responsibility": "individual",
                         "estimated_debt": 15000,
                         "current_monthly_payment": 200,
                         "creditor_name": "CAPITAL ONE BANK USA",
@@ -2363,6 +2833,9 @@
                         "reference_id": "example-debt-2",
                         "account_number": "2222",
                         "open_date": "2022-08-19",
+                        "last_payment_date": "2026-10-01",
+                        "balance_date": "2026-10-02",
+                        "responsibility": "joint",
                         "estimated_debt": 8000,
                         "current_monthly_payment": 250,
                         "creditor_name": "ONEMAIN",
@@ -4711,65 +5184,118 @@
   },
   "components": {
     "schemas": {
-      "DraApplicantInput": {
+      "ResendAgreementV2ApplicantRequest": {
         "type": "object",
-        "description": "Applicant DRA signing preferences",
+        "description": "Applicant resend preferences",
         "properties": {
           "signing_type": {
             "type": "string",
-            "description": "DocuSign signing method. Use 'url' for embedded signing, 'email' for standard email signing.",
+            "description": "Determines how the agreement is resent. Use 'url' for an embedded signable URL, 'email' for standard email signing.",
             "enum": [
               "url",
               "email"
             ],
             "example": "url"
           }
-        }
+        },
+        "required": [
+          "signing_type"
+        ]
       },
-      "DraRequest": {
+      "ResendAgreementV2Request": {
         "type": "object",
-        "description": "Request body to generate a Debt Resolution Agreement (DRA) signing session",
+        "description": "Request body to resend a CA agreement envelope and obtain a fresh embedded signing URL",
         "properties": {
-          "returning_url": {
-            "type": "string",
-            "description": "URL to redirect the applicant to after completing or declining the DocuSign session",
-            "example": "https://www.example.net/callback/docusign"
-          },
           "applicant": {
-            "$ref": "#/components/schemas/DraApplicantInput",
-            "description": "Applicant signing preferences"
-          },
-          "credit_utilization": {
-            "type": "number",
-            "format": "double",
-            "description": "Applicant credit utilization value forwarded to the downstream lead during the DRA generation proxy PATCH. Optional; omitted values leave the field unchanged downstream.",
-            "example": 589.8445595854922
+            "$ref": "#/components/schemas/ResendAgreementV2ApplicantRequest",
+            "description": "Applicant resend preferences"
           }
-        }
+        },
+        "required": [
+          "applicant"
+        ]
       },
-      "DraApplicant": {
+      "ResendAgreementV2ApplicantResponse": {
         "type": "object",
         "description": "Applicant signing URL details",
         "properties": {
           "url": {
-            "type": "string",
-            "description": "Embedded DocuSign signing URL. Redirect the applicant to this URL to complete signing.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Embedded DocuSign signing URL. Populated only when signing_type is 'url' and a URL is available. For a CA envelope, the URL is signable after Day-3 auto-unpause. Paused envelopes return HTTP 400 / ER40501 instead of a preview URL.",
             "example": "https://demo.docusign.net/Signing/MTRedeem/v1/9cf515f1-632a-44eb-98c9-962b294aec38?slt=..."
           }
         }
       },
-      "DraResponse": {
+      "ResendAgreementV2Response": {
         "type": "object",
-        "description": "Response containing the DocuSign envelope ID and embedded signing URL",
+        "description": "Response containing the DocuSign envelope ID and, for url-based resends, a fresh embedded signing URL",
         "properties": {
           "applicant": {
-            "$ref": "#/components/schemas/DraApplicant",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResendAgreementV2ApplicantResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Applicant signing details"
           },
           "envelopeId": {
             "type": "string",
             "description": "DocuSign envelope ID for this signing session",
             "example": "91a9221f-b944-82b1-816d-ab894b5e1d28"
+          },
+          "xCorrelationId": {
+            "type": "string",
+            "description": "Optional reference ID for tracing the request",
+            "example": "example-correlation-id"
+          }
+        }
+      },
+      "ARPCErrorDetails": {
+        "type": "object",
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ErrorDetails"
+          },
+          {
+            "$ref": "#/components/schemas/AgreementErrorDetails"
+          }
+        ],
+        "description": "Readiness-gate or agreement-specific error details",
+        "properties": {
+          "checks": {
+            "type": "array",
+            "description": "Per-gate check results",
+            "items": {
+              "$ref": "#/components/schemas/ReadinessCheck"
+            }
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Summary message for the readiness failure",
+            "example": "Application needs to be approved by Underwriter"
+          },
+          "is_program_refresh_required": {
+            "type": "boolean",
+            "description": "Whether a program refresh is required before re-submission",
+            "example": false
+          },
+          "is_uw_approved": {
+            "type": "boolean",
+            "description": "Whether the application is currently UW-approved",
+            "example": false
+          },
+          "envelope_id": {
+            "type": "string",
+            "description": "Envelope associated with an agreement error"
           }
         }
       },
@@ -4778,9 +5304,12 @@
         "description": "Unified DEX error response body",
         "properties": {
           "status": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "string"
+            ],
             "format": "int32",
-            "description": "HTTP status code",
+            "description": "HTTP status code. Application errors use a number; gateway authentication errors may use a string such as \"401\".",
             "example": 400
           },
           "error_code": {
@@ -4801,9 +5330,15 @@
             }
           },
           "error_details": {
-            "type": "null",
-            "$ref": "#/components/schemas/ErrorDetails",
-            "description": "Optional readiness-gate breakdown. Present for readiness failures such as ER40301, ER40303, ER40304, and ER40305."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ARPCErrorDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional readiness-gate breakdown (ER40301, ER40303, ER40304, ER40305) or agreement-specific details such as envelope_id for ER40501."
           },
           "message": {
             "type": "string",
@@ -4812,13 +5347,24 @@
           },
           "timestamp": {
             "type": "string",
-            "description": "ISO-8601 UTC timestamp of when the error occurred",
+            "description": "Error timestamp. Application errors use ISO-8601 UTC; gateway authentication errors may use yyyy-MM-dd HH:mm:ss.SSS without a timezone.",
             "example": "2026-06-26T14:30:00Z"
           },
           "x_correlation_id": {
             "type": "string",
             "description": "Correlation ID for distributed tracing across services",
             "example": "df5a91e8-6e39-4b02-bd1a-fecf8c351695"
+          }
+        }
+      },
+      "AgreementErrorDetails": {
+        "type": "object",
+        "description": "Additional details about an unsuccessful agreement request",
+        "properties": {
+          "envelope_id": {
+            "type": "string",
+            "description": "Envelope associated with the error",
+            "example": "11111111-2222-4333-8444-555555555555"
           }
         }
       },
@@ -4958,6 +5504,109 @@
             "type": "string",
             "description": "Human-readable explanation — same text as in errors[]. May be reworded over time; do not match on this value.",
             "example": "applicant and co_applicant have the same email address"
+          }
+        }
+      },
+      "VoidAgreementRequest": {
+        "type": "object",
+        "description": "Request to void an agreement envelope",
+        "properties": {
+          "voiding_reason": {
+            "type": "string",
+            "description": "Reason for voiding the agreement. Must contain at least one non-whitespace character. Recorded on the lead after the agreement is successfully voided.",
+            "example": "Applicant requested a revised agreement",
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          }
+        },
+        "required": [
+          "voiding_reason"
+        ]
+      },
+      "VoidAgreementResponse": {
+        "type": "object",
+        "description": "Details of the successfully voided agreement envelope",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Envelope status after voiding",
+            "example": "voided"
+          },
+          "envelopeId": {
+            "type": "string",
+            "description": "Voided envelope ID",
+            "example": "11111111-2222-4333-8444-555555555555"
+          },
+          "statusDateTime": {
+            "type": "string",
+            "description": "Time the agreement was voided, without a timezone or UTC offset; fractional seconds may be present. Not an RFC 3339 date-time.",
+            "example": "2026-11-02T18:08:23.269092"
+          },
+          "xCorrelationId": {
+            "type": "string",
+            "description": "Optional reference ID for tracing the request",
+            "example": "example-correlation-id"
+          }
+        }
+      },
+      "DraApplicantInput": {
+        "type": "object",
+        "description": "Applicant DRA signing preferences",
+        "properties": {
+          "signing_type": {
+            "type": "string",
+            "description": "DocuSign signing method. Use 'url' for embedded signing, 'email' for standard email signing.",
+            "enum": [
+              "url",
+              "email"
+            ],
+            "example": "url"
+          }
+        }
+      },
+      "DraRequest": {
+        "type": "object",
+        "description": "Request body to generate a Debt Resolution Agreement (DRA) signing session",
+        "properties": {
+          "returning_url": {
+            "type": "string",
+            "description": "URL to redirect the applicant to after completing or declining the DocuSign session",
+            "example": "https://www.example.net/callback/docusign"
+          },
+          "applicant": {
+            "$ref": "#/components/schemas/DraApplicantInput",
+            "description": "Applicant signing preferences"
+          },
+          "credit_utilization": {
+            "type": "number",
+            "format": "double",
+            "description": "Applicant credit utilization value forwarded to the downstream lead during the DRA generation proxy PATCH. Optional; omitted values leave the field unchanged downstream.",
+            "example": 589.8445595854922
+          }
+        }
+      },
+      "DraApplicant": {
+        "type": "object",
+        "description": "Applicant signing URL details",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Embedded DocuSign signing URL. Redirect the applicant to this URL to complete signing.",
+            "example": "https://demo.docusign.net/Signing/MTRedeem/v1/9cf515f1-632a-44eb-98c9-962b294aec38?slt=..."
+          }
+        }
+      },
+      "DraResponse": {
+        "type": "object",
+        "description": "Response containing the DocuSign envelope ID and embedded signing URL",
+        "properties": {
+          "applicant": {
+            "$ref": "#/components/schemas/DraApplicant",
+            "description": "Applicant signing details"
+          },
+          "envelopeId": {
+            "type": "string",
+            "description": "DocuSign envelope ID for this signing session",
+            "example": "91a9221f-b944-82b1-816d-ab894b5e1d28"
           }
         }
       },
@@ -7441,8 +8090,14 @@
             "example": "87654"
           },
           "co_applicant": {
-            "type": "null",
-            "$ref": "#/components/schemas/LeadApplicant",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeadApplicant"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Co-applicant details, if present"
           },
           "debt_accounts": {
@@ -7473,8 +8128,14 @@
             }
           },
           "bank_details": {
-            "type": "null",
-            "$ref": "#/components/schemas/BankDetails",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BankDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Bank account details for programme drafts"
           },
           "ineligible_reason": {
@@ -8093,8 +8754,14 @@
             "description": "Transformed program data"
           },
           "readiness": {
-            "type": "null",
-            "$ref": "#/components/schemas/LeadReadiness",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeadReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Readiness check result. Present ONLY in UW Submission responses; absent from GET Lead and PATCH Lead responses."
           }
         }
@@ -8740,6 +9407,69 @@
           }
         }
       },
+      "ApplicationStatusResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Flat application record. Only selected fields that are available are returned. Without query, returns id, fdr_applicant_id, sub_status, and stage_name or status. Additional supported fields may be selected using query.",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Application record ID",
+            "example": "00600XEXAMPLE"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current lead status, when available",
+            "example": "Contacted"
+          },
+          "fdr_applicant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FDR applicant ID",
+            "example": "APP-12345678"
+          },
+          "sub_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current application sub-status",
+            "example": "UW Approved"
+          },
+          "stage_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current application stage, when available",
+            "example": "Waiting for Agreement"
+          },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Applicant first name, when selected",
+            "example": "Jane"
+          },
+          "last_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Applicant last name, when selected",
+            "example": "Doe"
+          }
+        }
+      },
       "ProgramSelectionApplicant": {
         "type": "object",
         "description": "Minimal applicant reference identifying the lead",
@@ -8749,7 +9479,10 @@
             "description": "The unique FDR applicant ID of the lead",
             "example": "285b4549a62g7d3"
           }
-        }
+        },
+        "required": [
+          "fdr_applicant_id"
+        ]
       },
       "ProgramSelectionRequest": {
         "type": "object",
@@ -8798,6 +9531,27 @@
         "required": [
           "fdr_applicant_id"
         ]
+      },
+      "ProgramPendingResponse": {
+        "type": "object",
+        "description": "Program processing is pending. Retry after the delay in Retry-After.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Pending processing state, such as NETWORK_USER_PENDING, CREDIT_PENDING, or PROGRAM_GENERATE_PENDING",
+            "example": "CREDIT_PENDING"
+          },
+          "message": {
+            "type": "string",
+            "description": "Explanation of the pending state",
+            "example": "Network user created, credit report not yet ready"
+          },
+          "isSuccess": {
+            "type": "boolean",
+            "description": "Whether the request was accepted; does not indicate program eligibility",
+            "example": true
+          }
+        }
       },
       "CreditPullConsent": {
         "type": "object",
@@ -8891,8 +9645,14 @@
             "description": "Mailing address (optional)"
           },
           "credit_pull_consent": {
-            "type": "null",
-            "$ref": "#/components/schemas/CreditPullConsent",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreditPullConsent"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Required when pull_credit_report is true. Records the applicant's consent to a soft credit pull."
           }
         }
@@ -8916,6 +9676,35 @@
             "format": "date",
             "description": "Date the account was opened (YYYY-MM-DD)",
             "example": "2023-05-09"
+          },
+          "last_payment_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Optional date of the last payment (YYYY-MM-DD). Supply the actual date when known; if omitted, program generation uses the current date for settlement calculations, which can affect NPV and eligibility.",
+            "example": "2026-10-01"
+          },
+          "balance_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Optional date the outstanding balance was reported (YYYY-MM-DD). If omitted, program generation uses the current date for eligibility evaluation.",
+            "example": "2026-10-07"
+          },
+          "responsibility": {
+            "type": "string",
+            "description": "Optional account ownership or responsibility. Accepted values are normalized labels, not raw bureau ECOA codes; a recognized value does not guarantee debt eligibility.",
+            "enum": [
+              "individual",
+              "joint",
+              "authorized-user",
+              "co-signer",
+              "business",
+              "on-behalf-of",
+              "signer",
+              "deceased",
+              "terminated",
+              "undesignated"
+            ],
+            "example": "individual"
           },
           "estimated_debt": {
             "type": "number",
